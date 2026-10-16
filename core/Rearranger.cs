@@ -297,6 +297,7 @@ public static class Rearranger
         public FoamMesh Candidate;           // the built mesh even if refused (diagnostics)
         public string Info, Fail;
         public long Ms;
+        public string Timing = "";           // per stage, for the log
 
         public string Calibration;
         public List<int> Grow = new List<int>();   // bubbles enlarged by ~one grid cell before calibration (contacts)
@@ -309,6 +310,8 @@ public static class Rearranger
         public void Run()
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            long tCalV = 0, tBuildV = 0, tTransferV = 0;
+            var stageV = new System.Text.StringBuilder();
             try
             {
                 // For an add, calibrate the existing bubbles first, then (re)place the seed: calibrating
@@ -336,9 +339,15 @@ public static class Rearranger
                     Fn.D[k - 1] -= H * GridFactor * Math.Max(0.2, 2 * Fn.A[k - 1] * r);
                 }
                 Calibration = CalibrateVolumes(Fn, Lo, Hi, H * GridFactor / 1.5, CurrentVolume, existing);
+                tCalV = sw.ElapsedMilliseconds;
                 if (AddRadius > 0) PlaceSeed(Fn, AddAt, AddR0);
                 string info;
+                var stage = stageV;
+                long tStage = sw.ElapsedMilliseconds;
+                MobiusMesher.StageTimer = name => { long now = sw.ElapsedMilliseconds; stage.Append(" ").Append(name).Append(" ").Append(now - tStage); tStage = now; };
                 var mesh = MobiusMesher.Build(Fn, Lo, Hi, H, out info, Scale, GridFactor, RemeshIters);
+                MobiusMesher.StageTimer = null;
+                tBuildV = sw.ElapsedMilliseconds;
                 Info = info;
                 if (Old != null && ZoneAt.Count > 0)
                 {
@@ -357,6 +366,7 @@ public static class Rearranger
                     // Only a bubble that all but vanishes is refused.
                     else if (!(vol[k] > 0.05 * CurrentVolume[k]))
                         Fail = "bubble " + k + " would vanish (" + (vol[k] / CurrentVolume[k]).ToString("P0", CultureInfo.InvariantCulture) + " of its volume)";
+                tTransferV = sw.ElapsedMilliseconds;
                 var hist = Remesher.EdgeHistogram(mesh);
                 if (Fail == null && (hist[1] > 0 || hist[4] + hist[5] > 0))
                     Fail = "rebuilt mesh not watertight (" + hist[1] + " open edges, " + (hist[4] + hist[5]) + " edges with 4+ films)";
@@ -365,6 +375,8 @@ public static class Rearranger
             }
             catch (Exception e) { Fail = e.GetType().Name + ": " + e.Message; }
             Ms = sw.ElapsedMilliseconds;
+            Timing = string.Format(CultureInfo.InvariantCulture, "calibrate {0} / mesh {1} ({2}) / transfer {3} / checks {4} ms",
+                                   tCalV, tBuildV - tCalV, stageV.ToString().Trim(), tTransferV - tBuildV, Ms - tTransferV);
         }
     }
 

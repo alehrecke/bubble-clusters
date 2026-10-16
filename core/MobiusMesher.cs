@@ -30,6 +30,8 @@ public static class MobiusMesher
     }
 
     public static Action<string, FoamMesh> Debug;
+    // Per-stage timing hook (Rearranger's rebuild timing). ThreadStatic: rebuilds run on a background thread.
+    [ThreadStatic] public static Action<string> StageTimer;
 
     public static FoamMesh Build(IList<Vec3> centers, IList<double> radii, double h, out string info, HostSurface host = null)
     {
@@ -117,6 +119,7 @@ public static class MobiusMesher
         var near = new List<int>[8];
         var allG = new double[8][];
         for (int c = 0; c < 8; c++) { near[c] = new List<int>(4); allG[c] = new double[np + 1]; }
+        var nodeG = new double[nn][];   // per grid node, filled on first use
         var tp = new Vec3[4];
         var phases = new List<int>(6);
 
@@ -135,14 +138,20 @@ public static class MobiusMesher
                     for (int c = 0; c < 8; c++)
                     {
                         corner[c] = new Vec3(lo.X + (i + (c & 1)) * h, lo.Y + (j + ((c >> 1) & 1)) * h, lo.Z + (k + ((c >> 2) & 1)) * h);
-                        double gmax = 0;
-                        for (int b = 0; b <= np; b++)
+                        // Each grid node's phases are computed once and shared by the (up to) 8 cubes around it.
+                        int id = ((k + ((c >> 2) & 1)) * ny + j + ((c >> 1) & 1)) * nx + i + (c & 1);
+                        double[] g = nodeG[id];
+                        if (g == null)
                         {
-                            allG[c][b] = phase(b, corner[c]);
-                            gmax = Math.Max(gmax, allG[c][b]);
+                            g = new double[np + 1];
+                            for (int b = 0; b <= np; b++) g[b] = phase(b, corner[c]);
+                            nodeG[id] = g;
                         }
+                        allG[c] = g;
+                        double gmax = 0;
+                        for (int b = 0; b <= np; b++) if (g[b] > gmax) gmax = g[b];
                         near[c].Clear();
-                        for (int b = 0; b <= np; b++) if (allG[c][b] >= gmax - tau) near[c].Add(b);
+                        for (int b = 0; b <= np; b++) if (g[b] >= gmax - tau) near[c].Add(b);
                     }
                     foreach (var tet in Tets)
                     {
@@ -164,6 +173,7 @@ public static class MobiusMesher
 
         mesh.V = weld.Points;
         int soup = mesh.T.Count;
+        if (StageTimer != null) StageTimer("chop");
         if (fn.Host != null)
         {
             // Solid phase -> FoamMesh.Solid; dry solid (solid | outside) isn't meshed.
@@ -183,7 +193,9 @@ public static class MobiusMesher
         if (Debug != null) Debug("soup", mesh);
         // Slivers go through the remesher's collapse (link condition, no new chords). The
         // simpler collapse used before created fold edges (a film meeting itself at a border).
+        if (StageTimer != null) StageTimer("clean");
         int collapsed = Remesher.CollapseShort(mesh, 0.2 * h, 4.0 / 3.0 * L, regionScale);
+        if (StageTimer != null) StageTimer("slivers");
         if (Debug != null) Debug("slivers", mesh);
         var rm = new Remesher.Result();
         for (int it = 0; it < remeshIters; it++)
@@ -196,6 +208,7 @@ public static class MobiusMesher
             if (Debug != null) Debug("flip", mesh);
         }
         SnapToHost(mesh, fn.Host);
+        if (StageTimer != null) StageTimer("remesh");
         var hist = Remesher.EdgeHistogram(mesh);
         info = "grid " + nx + "x" + ny + "x" + nz + ", soup " + soup + " tris, collapsed " + collapsed +
                " slivers, remesh " + rm.Splits + "/" + rm.Collapses + "/" + rm.Flips + " (split/collapse/flip) -> " +

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The compiled Grasshopper plugin: core/ + gh/BubbleEngine.cs + this folder -> dist/BubbleClusters.gha.
+       Release-optimized, so it runs the same code as the paste-in script about 6-8x faster.
+       Build: dotnet build plugin -c Release   (see plugin/README.md for installing it in Rhino). -->
+  <PropertyGroup>
+    <!-- net48 loads in Rhino 8 in both runtime modes (.NET Core default and .NET Framework). -->
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>BubbleClusters</AssemblyName>
+    <RootNamespace>BubbleClusters</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Optimize>true</Optimize>
+    <CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>0.6.0</Version>
+    <NoWarn>CS0618;MSB3277;NU1701;CS1701;CS1702</NoWarn>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../core/*.cs" />
+    <Compile Include="../gh/BubbleEngine.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="RhinoCommon"><HintPath>C:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Grasshopper"><HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\Grasshopper.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GH_IO"><HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\GH_IO.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+  <!-- Grasshopper loads *.gha: copy the built dll there. -->
+  <Target Name="CopyGha" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(MSBuildProjectDirectory)\..\dist\BubbleClusters.gha" />
+  </Target>
+</Project>

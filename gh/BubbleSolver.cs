@@ -64,6 +64,41 @@ using Grasshopper.Kernel.Types;
 
 #endregion
 
+// Paste-in shim: Grasshopper calls RunScript; everything happens in BubbleEngine (merged below).
+// The compiled plugin (plugin/, BubbleClusters.gha) runs the same engine about 6-8x faster.
+public class Script_Instance : GH_ScriptInstance
+{
+#if GH_CHECK
+    // Only for the offline compile check (gh/check); Grasshopper generates this itself.
+    public override void InvokeRunScript(IGH_Component owner, object rhinoDocument, int iteration, List<object> inputs, IGH_DataAccess DA) { }
+    IGH_Component Component = null;
+    GH_Document GrasshopperDocument = null;
+#endif
+    readonly BubbleEngine engine = new BubbleEngine();
+
+    private void RunScript(List<Point3d> Centers, List<double> Radii, double CellSize, bool Pack, bool Reset, bool Run,
+                           double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
+                           Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh,
+                           ref object Films, ref object Bubbles, ref object Borders, ref object Nodes,
+                           ref object Pressures, ref object Info)
+    {
+        engine.Component = Component;
+        engine.GrasshopperDocument = GrasshopperDocument;
+        engine.Solve(Centers, Radii, CellSize, Pack, Reset, Run, Pull, Add, AddRadius, Pop, PopAt, AddAt, Gather, GatherTo,
+                     HostPlane, HostMesh, ref Films, ref Bubbles, ref Borders, ref Nodes, ref Pressures, ref Info);
+    }
+
+    public override BoundingBox ClippingBox { get { return engine.ClippingBox; } }
+    public override void DrawViewportMeshes(IGH_PreviewArgs args) { engine.DrawViewportMeshes(args); }
+    public override void DrawViewportWires(IGH_PreviewArgs args) { engine.DrawViewportWires(args); }
+}
+
+// ===================== ENGINE (merged from gh/BubbleEngine.cs by build_gh.py) =====================
+// Bubble cluster solver: Grasshopper-side engine (live loop, preview, recorder, Rhino mesh host).
+// Used by the plugin and by the paste-in script; see gh/build_gh.py and plugin/.
+
+
+
 public static class Settings
 {
     // Solver (see SolverSettings in the core for what each does).
@@ -104,7 +139,7 @@ public static class Settings
 
     // Run recordings (so Claude can replay / inspect a run): see ../CLAUDE.md.
     public static readonly bool RecordRuns = true;
-    public static readonly string RunsFolder = @"D:\AUGBOT\Pneuhaus\Lab\tools\bubble-clusters\runs";
+    public static readonly string RunsFolder = @"D:\AUGBOT\Pneuhaus\Tools\bubble-clusters\runs";
     public static readonly int KeepRuns = 5;
     public static readonly int SnapshotEvery = 10;   // ticks between mesh/viewport snapshots (+ first and settled)
     public static readonly bool CaptureViewport = true;
@@ -243,16 +278,14 @@ public class FoamView
     }
 }
 
-public class Script_Instance : GH_ScriptInstance
+// The component logic, shared by the compiled plugin (plugin/BubbleSolverComponent.cs) and the
+// paste-in script (BubbleSolver.template.cs). Both set Component / GrasshopperDocument and call Solve.
+public class BubbleEngine
 {
-#if GH_CHECK
-    // Only for the offline compile check (gh/check); Grasshopper generates this itself.
-    public override void InvokeRunScript(IGH_Component owner, object rhinoDocument, int iteration, List<object> inputs, IGH_DataAccess DA) { }
-    IGH_Component Component = null;
-    GH_Document GrasshopperDocument = null;
-#endif
+    public IGH_Component Component;
+    public GH_Document GrasshopperDocument;
 
-    private void RunScript(List<Point3d> Centers, List<double> Radii, double CellSize, bool Pack, bool Reset, bool Run,
+    public void Solve(List<Point3d> Centers, List<double> Radii, double CellSize, bool Pack, bool Reset, bool Run,
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
                            Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh,
                            ref object Films, ref object Bubbles, ref object Borders, ref object Nodes,
@@ -581,12 +614,12 @@ public class Script_Instance : GH_ScriptInstance
     BubbleRun current;
     Rhino.Display.DisplayMaterial outerMat, wallMat;
 
-    public override BoundingBox ClippingBox
+    public BoundingBox ClippingBox
     {
         get { return current != null ? current.View.Box : BoundingBox.Empty; }
     }
 
-    public override void DrawViewportMeshes(IGH_PreviewArgs args)
+    public void DrawViewportMeshes(IGH_PreviewArgs args)
     {
         if (current == null) return;
         if (outerMat == null)
@@ -600,7 +633,7 @@ public class Script_Instance : GH_ScriptInstance
         for (int i = 0; i < v.Films.Count; i++) if (!v.FilmIsWall[i] && !v.FilmIsFoot[i]) args.Display.DrawMeshShaded(v.Films[i], outerMat);
     }
 
-    public override void DrawViewportWires(IGH_PreviewArgs args)
+    public void DrawViewportWires(IGH_PreviewArgs args)
     {
         if (current == null) return;
         var v = current.View;
@@ -850,6 +883,7 @@ public static class Json
     public static string Pair(string key, object value) { return Str(key) + ":" + Val(value); }
 }
 
+
 // ===================== CORE (merged from ../core/*.cs by build_gh.py) =====================
 // ---- core/Vec3.cs ----
 // Minimal 3D vector so the core has no RhinoCommon dependency.
@@ -1089,6 +1123,8 @@ public static class MobiusMesher
     }
 
     public static Action<string, FoamMesh> Debug;
+    // Per-stage timing hook (Rearranger's rebuild timing). ThreadStatic: rebuilds run on a background thread.
+    [ThreadStatic] public static Action<string> StageTimer;
 
     public static FoamMesh Build(IList<Vec3> centers, IList<double> radii, double h, out string info, HostSurface host = null)
     {
@@ -1176,6 +1212,7 @@ public static class MobiusMesher
         var near = new List<int>[8];
         var allG = new double[8][];
         for (int c = 0; c < 8; c++) { near[c] = new List<int>(4); allG[c] = new double[np + 1]; }
+        var nodeG = new double[nn][];   // per grid node, filled on first use
         var tp = new Vec3[4];
         var phases = new List<int>(6);
 
@@ -1194,14 +1231,20 @@ public static class MobiusMesher
                     for (int c = 0; c < 8; c++)
                     {
                         corner[c] = new Vec3(lo.X + (i + (c & 1)) * h, lo.Y + (j + ((c >> 1) & 1)) * h, lo.Z + (k + ((c >> 2) & 1)) * h);
-                        double gmax = 0;
-                        for (int b = 0; b <= np; b++)
+                        // Each grid node's phases are computed once and shared by the (up to) 8 cubes around it.
+                        int id = ((k + ((c >> 2) & 1)) * ny + j + ((c >> 1) & 1)) * nx + i + (c & 1);
+                        double[] g = nodeG[id];
+                        if (g == null)
                         {
-                            allG[c][b] = phase(b, corner[c]);
-                            gmax = Math.Max(gmax, allG[c][b]);
+                            g = new double[np + 1];
+                            for (int b = 0; b <= np; b++) g[b] = phase(b, corner[c]);
+                            nodeG[id] = g;
                         }
+                        allG[c] = g;
+                        double gmax = 0;
+                        for (int b = 0; b <= np; b++) if (g[b] > gmax) gmax = g[b];
                         near[c].Clear();
-                        for (int b = 0; b <= np; b++) if (allG[c][b] >= gmax - tau) near[c].Add(b);
+                        for (int b = 0; b <= np; b++) if (g[b] >= gmax - tau) near[c].Add(b);
                     }
                     foreach (var tet in Tets)
                     {
@@ -1223,6 +1266,7 @@ public static class MobiusMesher
 
         mesh.V = weld.Points;
         int soup = mesh.T.Count;
+        if (StageTimer != null) StageTimer("chop");
         if (fn.Host != null)
         {
             // Solid phase -> FoamMesh.Solid; dry solid (solid | outside) isn't meshed.
@@ -1242,7 +1286,9 @@ public static class MobiusMesher
         if (Debug != null) Debug("soup", mesh);
         // Slivers go through the remesher's collapse (link condition, no new chords). The
         // simpler collapse used before created fold edges (a film meeting itself at a border).
+        if (StageTimer != null) StageTimer("clean");
         int collapsed = Remesher.CollapseShort(mesh, 0.2 * h, 4.0 / 3.0 * L, regionScale);
+        if (StageTimer != null) StageTimer("slivers");
         if (Debug != null) Debug("slivers", mesh);
         var rm = new Remesher.Result();
         for (int it = 0; it < remeshIters; it++)
@@ -1255,6 +1301,7 @@ public static class MobiusMesher
             if (Debug != null) Debug("flip", mesh);
         }
         SnapToHost(mesh, fn.Host);
+        if (StageTimer != null) StageTimer("remesh");
         var hist = Remesher.EdgeHistogram(mesh);
         info = "grid " + nx + "x" + ny + "x" + nz + ", soup " + soup + " tris, collapsed " + collapsed +
                " slivers, remesh " + rm.Splits + "/" + rm.Collapses + "/" + rm.Flips + " (split/collapse/flip) -> " +
@@ -1402,9 +1449,167 @@ public static class MobiusMesher
 // collapses along its border, and border edges are never flipped. Region labels and
 // orientation are carried onto every new triangle, so volumes are untouched (splits and
 // flips) or change only slightly (collapses; the solver's volume correction absorbs that).
+//
+// Implementation (2026-10-16): each operation builds a vertex -> triangle table once (Topo) and
+// updates it as it splits / collapses / flips, so edge lookups are small list intersections. The
+// first version rebuilt a global edge dictionary, region lists and neighbour sets on every pass:
+// ~540 ms for one remesh round on a 45k-triangle mesh that needed almost nothing, and ~4 s of each
+// ~5 s rebuild.
 public static class Remesher
 {
     public class Result { public int Splits, Collapses, Flips; }
+
+    // Vertex -> live triangle table over a FoamMesh, kept current by the operations below.
+    sealed class Topo
+    {
+        public readonly FoamMesh M;
+        public readonly List<List<int>> VT;
+        public readonly List<bool> Dead;
+        readonly List<int> scratch = new List<int>(8);
+
+        public Topo(FoamMesh m)
+        {
+            M = m;
+            VT = new List<List<int>>(m.V.Count + 64);
+            for (int v = 0; v < m.V.Count; v++) VT.Add(new List<int>(7));
+            Dead = new List<bool>(m.T.Count + 64);
+            for (int i = 0; i < m.T.Count; i++)
+            {
+                var t = m.T[i];
+                VT[t.A].Add(i); VT[t.B].Add(i); VT[t.C].Add(i);
+                Dead.Add(false);
+            }
+        }
+
+        public int AddVertex(Vec3 p) { M.V.Add(p); VT.Add(new List<int>(7)); return M.V.Count - 1; }
+
+        public int AddTri(FoamTri t)
+        {
+            int i = M.T.Count;
+            M.T.Add(t); Dead.Add(false);
+            VT[t.A].Add(i); VT[t.B].Add(i); VT[t.C].Add(i);
+            return i;
+        }
+
+        public static bool Has(FoamTri t, int v) { return t.A == v || t.B == v || t.C == v; }
+
+        // Live triangles on edge (a, b), into `res` (cleared first).
+        public List<int> EdgeTris(int a, int b, List<int> res)
+        {
+            res.Clear();
+            var la = VT[a];
+            for (int i = 0; i < la.Count; i++) if (Has(M.T[la[i]], b)) res.Add(la[i]);
+            return res;
+        }
+
+        public bool EdgeExists(int a, int b)
+        {
+            var la = VT[a];
+            for (int i = 0; i < la.Count; i++) if (Has(M.T[la[i]], b)) return true;
+            return false;
+        }
+
+        public List<int> Ring(int v, List<int> res)
+        {
+            res.Clear();
+            foreach (int ti in VT[v])
+            {
+                var t = M.T[ti];
+                if (t.A != v && !res.Contains(t.A)) res.Add(t.A);
+                if (t.B != v && !res.Contains(t.B)) res.Add(t.B);
+                if (t.C != v && !res.Contains(t.C)) res.Add(t.C);
+            }
+            return res;
+        }
+
+        public List<int> Regions(int v, List<int> res)
+        {
+            res.Clear();
+            foreach (int ti in VT[v])
+            {
+                var t = M.T[ti];
+                if (!res.Contains(t.Neg)) res.Add(t.Neg);
+                if (!res.Contains(t.Pos)) res.Add(t.Pos);
+            }
+            res.Sort();
+            return res;
+        }
+
+        public bool EdgeIsBorder(int a, int b) { return M.IsBorder(EdgeTris(a, b, scratch)); }
+
+        // Number of border edges at v.
+        public int BorderCount(int v)
+        {
+            int n = 0;
+            var ring = Ring(v, new List<int>(8));
+            foreach (int w in ring) if (EdgeIsBorder(v, w)) n++;
+            return n;
+        }
+
+        // All live edges, each once, as (min << 32 | max) keys.
+        public long[] Edges()
+        {
+            var keys = new long[3 * M.T.Count];
+            int n = 0;
+            for (int i = 0; i < M.T.Count; i++)
+            {
+                if (Dead[i]) continue;
+                var t = M.T[i];
+                keys[n++] = FoamMesh.EdgeKey(t.A, t.B); keys[n++] = FoamMesh.EdgeKey(t.B, t.C); keys[n++] = FoamMesh.EdgeKey(t.C, t.A);
+            }
+            Array.Sort(keys, 0, n);
+            int u = 0;
+            for (int i = 0; i < n; i++) if (i == 0 || keys[i] != keys[i - 1]) keys[u++] = keys[i];
+            Array.Resize(ref keys, u);
+            return keys;
+        }
+
+        // Edges to examine: all of them (dirty == null, first pass), else only those touching a vertex
+        // changed in the previous pass. Later passes then cost O(changes), not O(mesh).
+        public long[] Edges(HashSet<int> dirty)
+        {
+            if (dirty == null) return Edges();
+            var set = new HashSet<long>(LongKey.Comparer);
+            var ring = new List<int>(8);
+            foreach (int v in dirty)
+            {
+                if (v >= VT.Count) continue;
+                foreach (int w in Ring(v, ring)) set.Add(FoamMesh.EdgeKey(v, w));
+            }
+            var keys = set.ToArray();
+            Array.Sort(keys);
+            return keys;
+        }
+
+        public bool[] BorderVertices(long[] edges)
+        {
+            var on = new bool[M.V.Count];
+            foreach (long e in edges)
+            {
+                int a = (int)(e >> 32), b = (int)(e & 0xffffffff);
+                if (EdgeIsBorder(a, b)) on[a] = on[b] = true;
+            }
+            return on;
+        }
+
+        public void Kill(int ti)
+        {
+            if (Dead[ti]) return;
+            Dead[ti] = true;
+            var t = M.T[ti];
+            VT[t.A].Remove(ti); VT[t.B].Remove(ti); VT[t.C].Remove(ti);
+        }
+
+        // Drop dead triangles (and, via Clean, unused vertices and duplicates).
+        public void Compact()
+        {
+            if (!Dead.Contains(true)) return;
+            var keep = new List<FoamTri>(M.T.Count);
+            for (int i = 0; i < M.T.Count; i++) if (!Dead[i]) keep.Add(M.T[i]);
+            M.T = keep;
+            M.Clean();
+        }
+    }
 
     // Optional per-region size scale in (0, 1] (index = region, [0] = outside = 1): edges touching
     // region k aim for L * scale[k], so small bubbles get proportionally finer triangles.
@@ -1423,8 +1628,7 @@ public static class Remesher
     }
 
     // MaxPasses caps the inner repeat of each operation (split / collapse / flip). The mesher
-    // wants full cleanup (6). The solver's periodic remesh runs every few steps, so 2 is enough,
-    // and each pass rebuilds the edge table (~150 ms per pass at 25k tris in Rhino).
+    // wants full cleanup (6); the solver's periodic remesh uses 2.
     public static Result Run(FoamMesh m, double L, int iterations, double[] scale = null, int maxPasses = 6)
     {
         var r = new Result();
@@ -1444,34 +1648,37 @@ public static class Remesher
 
     public static int SplitLong(FoamMesh m, double maxLen, bool chords = false, double[] scale = null, int maxPasses = 6)
     {
+        var tp = new Topo(m);
+        var tris = new List<int>(4);
         int total = 0;
+        List<bool> onBorder = chords ? new List<bool>(tp.BorderVertices(tp.Edges())) : null;
+        HashSet<int> dirty = null;
         for (int pass = 0; pass < maxPasses; pass++)
         {
-            var edges = m.EdgeTris();
-            var onBorder = chords ? BorderVertices(m, edges) : null;
+            var edges = tp.Edges(dirty);
+            dirty = new HashSet<int>();
             var cand = new List<KeyValuePair<long, double>>();
-            foreach (var kv in edges)
+            foreach (long e in edges)
             {
-                int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
+                int a = (int)(e >> 32), b = (int)(e & 0xffffffff);
                 double len = (m.V[a] - m.V[b]).Length;
-                bool chord = chords && kv.Value.Count == 2 && onBorder[a] && onBorder[b] && !m.IsBorder(kv.Value);
-                if (len > maxLen * EdgeScale(m, kv.Value, scale) || chord) cand.Add(new KeyValuePair<long, double>(kv.Key, len));
+                tp.EdgeTris(a, b, tris);
+                bool chord = chords && tris.Count == 2 && onBorder[a] && onBorder[b] && !m.IsBorder(tris);
+                if (len > maxLen * EdgeScale(m, tris, scale) || chord) cand.Add(new KeyValuePair<long, double>(e, len));
             }
             if (cand.Count == 0) break;
             cand.Sort((p, q) => q.Value.CompareTo(p.Value));
-            var touched = new bool[m.T.Count];
-            var add = new List<FoamTri>();
             int done = 0;
             foreach (var kv in cand)
             {
-                var tris = edges[kv.Key];
-                if (tris.Any(t => touched[t])) continue;
                 int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
-                int mid = m.V.Count;
-                m.V.Add((m.V[a] + m.V[b]) * 0.5);
-                foreach (int ti in tris)
+                tp.EdgeTris(a, b, tris);
+                if (tris.Count == 0) continue;            // already split this pass
+                bool border = m.IsBorder(tris);
+                int mid = tp.AddVertex((m.V[a] + m.V[b]) * 0.5);
+                if (chords) onBorder.Add(border);         // a border's midpoint is on the border; a film edge's isn't
+                foreach (int ti in tris.ToArray())
                 {
-                    touched[ti] = true;
                     var t = m.T[ti];
                     // Rotate so the split edge is (A,B), keeping orientation.
                     if (!IsEdge(t.A, t.B, a, b))
@@ -1479,13 +1686,18 @@ public static class Remesher
                         if (IsEdge(t.B, t.C, a, b)) t = new FoamTri(t.B, t.C, t.A, t.Neg, t.Pos);
                         else t = new FoamTri(t.C, t.A, t.B, t.Neg, t.Pos);
                     }
+                    // (A, B, C) -> (A, mid, C) in place + new (mid, B, C).
                     m.T[ti] = new FoamTri(t.A, mid, t.C, t.Neg, t.Pos);
-                    add.Add(new FoamTri(mid, t.B, t.C, t.Neg, t.Pos));
+                    tp.VT[t.B].Remove(ti);
+                    tp.VT[mid].Add(ti);
+                    tp.AddTri(new FoamTri(mid, t.B, t.C, t.Neg, t.Pos));
+                    dirty.Add(t.C);
                 }
+                dirty.Add(mid); dirty.Add(a); dirty.Add(b);
                 done++;
             }
-            m.T.AddRange(add);
             total += done;
+            if (done == 0) break;
         }
         return total;
     }
@@ -1502,102 +1714,105 @@ public static class Remesher
 
     public static int CollapseShort(FoamMesh m, double minLen, double maxLen, double[] scale = null, int maxPasses = 6)
     {
+        var tp = new Topo(m);
+        var etris = new List<int>(4);
+        var regU = new List<int>(5); var regV = new List<int>(5);
+        var ringU = new List<int>(8); var ringV = new List<int>(8); var ringD = new List<int>(8); var ringK = new List<int>(8);
+        var opp = new List<int>(4);
+        var et = new List<int>(4);
         int total = 0;
+        HashSet<int> dirty = null;
         for (int pass = 0; pass < maxPasses; pass++)
         {
-            var regions = m.VertexRegions();
-            var edges = m.EdgeTris();
-            int nv = m.V.Count;
-            var vt = new List<int>[nv];
-            var ring = new HashSet<int>[nv];
-            for (int i = 0; i < nv; i++) { vt[i] = new List<int>(8); ring[i] = new HashSet<int>(); }
-            for (int i = 0; i < m.T.Count; i++)
-            {
-                var t = m.T[i];
-                vt[t.A].Add(i); vt[t.B].Add(i); vt[t.C].Add(i);
-                ring[t.A].Add(t.B); ring[t.A].Add(t.C);
-                ring[t.B].Add(t.A); ring[t.B].Add(t.C);
-                ring[t.C].Add(t.A); ring[t.C].Add(t.B);
-            }
-            var border = new int[nv];
-            foreach (var kv in edges)
-                if (m.IsBorder(kv.Value)) { border[(int)(kv.Key >> 32)]++; border[(int)(kv.Key & 0xffffffff)]++; }
-
             var cand = new List<KeyValuePair<long, double>>();
-            foreach (var kv in edges)
+            var scan = tp.Edges(dirty);
+            dirty = new HashSet<int>();
+            foreach (long e in scan)
             {
-                int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
+                int a = (int)(e >> 32), b = (int)(e & 0xffffffff);
                 double len = (m.V[a] - m.V[b]).Length;
-                if (len < minLen * EdgeScale(m, kv.Value, scale)) cand.Add(new KeyValuePair<long, double>(kv.Key, len));
+                if (len < minLen * EdgeScale(m, tp.EdgeTris(a, b, etris), scale)) cand.Add(new KeyValuePair<long, double>(e, len));
             }
             if (cand.Count == 0) break;
             cand.Sort((p, q) => p.Value.CompareTo(q.Value));
-            var locked = new bool[nv];
-            var map = Enumerable.Range(0, nv).ToArray();
-            var newPos = new Dictionary<int, Vec3>();
             int done = 0;
             foreach (var kv in cand)
             {
                 int u = (int)(kv.Key >> 32), v = (int)(kv.Key & 0xffffffff);
-                if (locked[u] || locked[v]) continue;
-                var etris = edges[kv.Key];
+                tp.EdgeTris(u, v, etris);
+                if (etris.Count == 0) continue;                          // gone (a neighbour collapsed)
+                double len = (m.V[u] - m.V[v]).Length;
+                if (len >= minLen * EdgeScale(m, etris, scale)) continue; // no longer short
                 bool borderEdge = m.IsBorder(etris);
-                int keep, drop;
-                bool sameClass = regions[u].Count == regions[v].Count && Subset(regions[u], regions[v]);
-                if (Subset(regions[v], regions[u]) && !(sameClass && border[v] > border[u])) { keep = u; drop = v; }
-                else if (Subset(regions[u], regions[v])) { keep = v; drop = u; }
+                tp.Regions(u, regU); tp.Regions(v, regV);
+                int bu = tp.BorderCount(u), bv = tp.BorderCount(v);
+                int keep, drop, bKeep, bDrop;
+                bool sameClass = regU.Count == regV.Count && Subset(regU, regV);
+                if (Subset(regV, regU) && !(sameClass && bv > bu)) { keep = u; drop = v; bKeep = bu; bDrop = bv; }
+                else if (Subset(regU, regV)) { keep = v; drop = u; bKeep = bv; bDrop = bu; }
                 else continue;
-                if (regions[drop].Count >= 3 && !borderEdge) continue;   // borders collapse only along themselves
-                if (border[drop] > 2 || (border[drop] > 0 && border[keep] == 0)) continue; // never remove nodes
+                var regDrop = drop == u ? regU : regV;
+                if (regDrop.Count >= 3 && !borderEdge) continue;              // borders collapse only along themselves
+                if (bDrop > 2 || (bDrop > 0 && bKeep == 0)) continue;          // never remove nodes
                 // Link condition: shared neighbours must be exactly the edge's opposite vertices.
-                var opp = new HashSet<int>();
+                opp.Clear();
                 foreach (int ti in etris)
                 {
                     var t = m.T[ti];
-                    opp.Add(t.A); opp.Add(t.B); opp.Add(t.C);
+                    if (t.A != u && t.A != v) opp.Add(t.A);
+                    if (t.B != u && t.B != v) opp.Add(t.B);
+                    if (t.C != u && t.C != v) opp.Add(t.C);
                 }
-                opp.Remove(u); opp.Remove(v);
+                tp.Ring(u, ringU); tp.Ring(v, ringV);
                 bool linkOk = true;
-                foreach (int w in ring[u]) if (w != v && ring[v].Contains(w) && !opp.Contains(w)) { linkOk = false; break; }
+                foreach (int w in ringU) if (w != v && ringV.Contains(w) && !opp.Contains(w)) { linkOk = false; break; }
                 if (!linkOk) continue;
                 // Same-class collapses (film-film, along a border) go to the midpoint.
-                Vec3 target = sameClass && border[drop] == border[keep] ? (m.V[u] + m.V[v]) * 0.5 : m.V[keep];
+                Vec3 target = sameClass && bDrop == bKeep ? (m.V[u] + m.V[v]) * 0.5 : m.V[keep];
                 // Don't create chords: a film vertex collapsing onto a border vertex must not
                 // connect it to another border vertex except along an existing border edge.
+                var rDrop = drop == u ? ringU : ringV;
+                var rKeep = drop == u ? ringV : ringU;
                 bool makesChord = false;
-                if (border[keep] > 0 && border[drop] == 0)
-                    foreach (int w in ring[drop])
+                if (bKeep > 0 && bDrop == 0)
+                    foreach (int w in rDrop)
                     {
-                        if (w == keep || border[w] == 0) continue;
-                        List<int> et;
-                        if (!edges.TryGetValue(FoamMesh.EdgeKey(keep, w), out et) || !m.IsBorder(et)) { makesChord = true; break; }
+                        if (w == keep || tp.BorderCount(w) == 0) continue;
+                        tp.EdgeTris(keep, w, et);
+                        if (et.Count == 0 || !m.IsBorder(et)) { makesChord = true; break; }
                     }
                 if (makesChord) continue;
                 bool tooLong = false;
                 double maxHere = maxLen * EdgeScale(m, etris, scale);
-                foreach (int w in ring[drop]) if ((m.V[w] - target).Length > maxHere) { tooLong = true; break; }
-                foreach (int w in ring[keep]) if (!tooLong && (m.V[w] - target).Length > maxHere) tooLong = true;
+                foreach (int w in rDrop) if ((m.V[w] - target).Length > maxHere) { tooLong = true; break; }
+                foreach (int w in rKeep) if (!tooLong && (m.V[w] - target).Length > maxHere) tooLong = true;
                 if (tooLong) continue;
-                if (!KeepsOrientation(m, vt[drop], drop, keep, target)) continue;
-                if (!KeepsOrientation(m, vt[keep], keep, keep, target)) continue;
-                map[drop] = keep;
-                newPos[keep] = target;
-                locked[u] = locked[v] = true;
-                foreach (int w in ring[u]) locked[w] = true;
-                foreach (int w in ring[v]) locked[w] = true;
+                if (!KeepsOrientation(m, tp.VT[drop], drop, keep, target)) continue;
+                if (!KeepsOrientation(m, tp.VT[keep], keep, keep, target)) continue;
+
+                // Collapse drop -> keep.
+                foreach (int ti in etris.ToArray()) tp.Kill(ti);
+                foreach (int ti in tp.VT[drop].ToArray())
+                {
+                    var t = m.T[ti];
+                    if (t.A == drop) t.A = keep;
+                    if (t.B == drop) t.B = keep;
+                    if (t.C == drop) t.C = keep;
+                    m.T[ti] = t;
+                    tp.VT[keep].Add(ti);
+                }
+                tp.VT[drop].Clear();
+                m.V[keep] = target;
+                dirty.Add(keep);
+                foreach (int w in rKeep) dirty.Add(w);
+                foreach (int w in rDrop) dirty.Add(w);
+                dirty.Remove(drop);
                 done++;
             }
-            if (done == 0) break;
-            foreach (var kv in newPos) m.V[kv.Key] = kv.Value;
-            for (int i = 0; i < m.T.Count; i++)
-            {
-                var t = m.T[i];
-                t.A = map[t.A]; t.B = map[t.B]; t.C = map[t.C];
-                m.T[i] = t;
-            }
-            m.Clean();
             total += done;
+            if (done == 0) break;
         }
+        tp.Compact();
         return total;
     }
 
@@ -1632,32 +1847,36 @@ public static class Remesher
     // opposite angles exceeds 180 degrees (Delaunay criterion), if the result doesn't fold.
     public static int FlipDelaunay(FoamMesh m, int maxPasses = 4)
     {
+        var tp = new Topo(m);
+        var tris = new List<int>(4);
         int total = 0;
+        // Flips never touch borders, so which vertices are on one doesn't change.
+        var onBorder = tp.BorderVertices(tp.Edges());
+        HashSet<int> dirty = null;
         for (int pass = 0; pass < maxPasses; pass++)
         {
-            var edges = m.EdgeTris();
+            var edges = tp.Edges(dirty);
+            dirty = new HashSet<int>();
             var touched = new bool[m.T.Count];
-            var onBorder = new bool[m.V.Count];
-            foreach (var kv in edges)
-                if (m.IsBorder(kv.Value)) { onBorder[(int)(kv.Key >> 32)] = true; onBorder[(int)(kv.Key & 0xffffffff)] = true; }
             int done = 0;
-            foreach (var kv in edges)
+            foreach (long e in edges)
             {
-                if (kv.Value.Count != 2) continue;
-                int t0 = kv.Value[0], t1 = kv.Value[1];
+                int a = (int)(e >> 32), b = (int)(e & 0xffffffff);
+                tp.EdgeTris(a, b, tris);
+                if (tris.Count != 2) continue;
+                int t0 = tris[0], t1 = tris[1];
                 if (touched[t0] || touched[t1]) continue;
                 var A = m.T[t0]; var B = m.T[t1];
                 if (A.Neg != B.Neg || A.Pos != B.Pos) continue;
-                int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
                 // Orient A as (p, q, x) with edge p->q, B must then contain q->p.
                 A = RotateTo(A, a, b);
-                if (A.A < 0) continue;
+                if (A.A < 0) { A = RotateTo(m.T[t0], b, a); if (A.A < 0) continue; }
                 int p = A.A, q = A.B, x = A.C;
                 var Bq = RotateTo(B, q, p);
                 if (Bq.A < 0) continue; // inconsistent orientation
                 int y = Bq.C;
                 if (x == y) continue;
-                if (edges.ContainsKey(FoamMesh.EdgeKey(x, y))) continue;
+                if (tp.EdgeExists(x, y)) continue;
                 // An "ear" has all three corners on a Plateau border: it lies along the border
                 // instead of spanning the film, kinks it, and makes the solver oscillate.
                 // Flip it away whenever the other side's apex is off the border.
@@ -1671,9 +1890,13 @@ public static class Remesher
                 Vec3 n2 = Vec3.Cross(m.V[q] - m.V[y], m.V[x] - m.V[y]);
                 if (Vec3.Dot(n1, n0) <= 0 || Vec3.Dot(n2, n0) <= 0) continue;
                 if (!ear && Vec3.Dot(n1, n2) <= 0.5 * n1.Length * n2.Length) continue;
+                // t0 (p, q, x) -> (x, p, y): loses q, gains y.  t1 (q, p, y) -> (y, q, x): loses p, gains x.
                 m.T[t0] = new FoamTri(x, p, y, A.Neg, A.Pos);
                 m.T[t1] = new FoamTri(y, q, x, A.Neg, A.Pos);
+                tp.VT[q].Remove(t0); tp.VT[y].Add(t0);
+                tp.VT[p].Remove(t1); tp.VT[x].Add(t1);
                 touched[t0] = touched[t1] = true;
+                dirty.Add(p); dirty.Add(q); dirty.Add(x); dirty.Add(y);
                 done++;
             }
             total += done;
@@ -2458,7 +2681,7 @@ public class FoamSolver
                          nodesBefore + "->" + Nodes.Count + ", border edges " + bordersBefore + "->" + BorderEdges.Count +
                          "; smallest volume kept vs snapshot " + kept.ToString("P0", System.Globalization.CultureInfo.InvariantCulture) +
                          (reinflate.Count > 0 ? "; re-inflating bubble " + string.Join(", ", reinflate) : "") +
-                         (job.Transfer != null ? "; " + job.Transfer : ""));
+                         (job.Transfer != null ? "; " + job.Transfer : "") + "; " + job.Timing);
     }
 
     public int Added;
@@ -3844,6 +4067,7 @@ public static class Rearranger
         public FoamMesh Candidate;           // the built mesh even if refused (diagnostics)
         public string Info, Fail;
         public long Ms;
+        public string Timing = "";           // per stage, for the log
 
         public string Calibration;
         public List<int> Grow = new List<int>();   // bubbles enlarged by ~one grid cell before calibration (contacts)
@@ -3856,6 +4080,8 @@ public static class Rearranger
         public void Run()
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            long tCalV = 0, tBuildV = 0, tTransferV = 0;
+            var stageV = new System.Text.StringBuilder();
             try
             {
                 // For an add, calibrate the existing bubbles first, then (re)place the seed: calibrating
@@ -3883,9 +4109,15 @@ public static class Rearranger
                     Fn.D[k - 1] -= H * GridFactor * Math.Max(0.2, 2 * Fn.A[k - 1] * r);
                 }
                 Calibration = CalibrateVolumes(Fn, Lo, Hi, H * GridFactor / 1.5, CurrentVolume, existing);
+                tCalV = sw.ElapsedMilliseconds;
                 if (AddRadius > 0) PlaceSeed(Fn, AddAt, AddR0);
                 string info;
+                var stage = stageV;
+                long tStage = sw.ElapsedMilliseconds;
+                MobiusMesher.StageTimer = name => { long now = sw.ElapsedMilliseconds; stage.Append(" ").Append(name).Append(" ").Append(now - tStage); tStage = now; };
                 var mesh = MobiusMesher.Build(Fn, Lo, Hi, H, out info, Scale, GridFactor, RemeshIters);
+                MobiusMesher.StageTimer = null;
+                tBuildV = sw.ElapsedMilliseconds;
                 Info = info;
                 if (Old != null && ZoneAt.Count > 0)
                 {
@@ -3904,6 +4136,7 @@ public static class Rearranger
                     // Only a bubble that all but vanishes is refused.
                     else if (!(vol[k] > 0.05 * CurrentVolume[k]))
                         Fail = "bubble " + k + " would vanish (" + (vol[k] / CurrentVolume[k]).ToString("P0", CultureInfo.InvariantCulture) + " of its volume)";
+                tTransferV = sw.ElapsedMilliseconds;
                 var hist = Remesher.EdgeHistogram(mesh);
                 if (Fail == null && (hist[1] > 0 || hist[4] + hist[5] > 0))
                     Fail = "rebuilt mesh not watertight (" + hist[1] + " open edges, " + (hist[4] + hist[5]) + " edges with 4+ films)";
@@ -3912,6 +4145,8 @@ public static class Rearranger
             }
             catch (Exception e) { Fail = e.GetType().Name + ": " + e.Message; }
             Ms = sw.ElapsedMilliseconds;
+            Timing = string.Format(CultureInfo.InvariantCulture, "calibrate {0} / mesh {1} ({2}) / transfer {3} / checks {4} ms",
+                                   tCalV, tBuildV - tCalV, stageV.ToString().Trim(), tTransferV - tBuildV, Ms - tTransferV);
         }
     }
 

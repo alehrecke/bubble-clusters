@@ -12,3 +12,6 @@ obj/
 
 # Unverified recovered GH file (see CLAUDE.md, "RECOVERY NEEDED")
 RECOVERY/
+
+# Built plugin (dotnet build plugin -c Release)
+dist/

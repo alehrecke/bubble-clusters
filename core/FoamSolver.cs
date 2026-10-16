@@ -753,7 +753,7 @@ public class FoamSolver
                          nodesBefore + "->" + Nodes.Count + ", border edges " + bordersBefore + "->" + BorderEdges.Count +
                          "; smallest volume kept vs snapshot " + kept.ToString("P0", System.Globalization.CultureInfo.InvariantCulture) +
                          (reinflate.Count > 0 ? "; re-inflating bubble " + string.Join(", ", reinflate) : "") +
-                         (job.Transfer != null ? "; " + job.Transfer : ""));
+                         (job.Transfer != null ? "; " + job.Transfer : "") + "; " + job.Timing);
     }
 
     public int Added;

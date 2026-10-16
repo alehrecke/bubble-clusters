@@ -1,6 +1,11 @@
 # Bubble solver — Grasshopper setup (Phases 1–3)
 
-## 1. Make the component
+## 0. Plugin (recommended since 2026-10-16)
+The same component is available compiled: `dotnet build plugin -c Release` → `dist/BubbleClusters.gha`. Install once
+(see `plugin/README.md`: `GrasshopperDeveloperSettings`, add the `dist` folder, tick memory-load, restart Rhino); it appears as
+**Pneuhaus → Bubbles → Bubble Solver** with the inputs below. The paste-in script (section 1) still works and behaves the same.
+
+## 1. Make the component (paste-in script)
 1. Add **Maths › Script › C# Script** (Rhino 8).
 2. Open it, select all, paste **`gh/BubbleSolver.cs`** (the merged file, ~1800 lines).
    Don't paste the `.template.cs`; it doesn't contain the solver core.

@@ -80,14 +80,16 @@ Read these pages at the start of any session before writing code:
   - `FoamAnalysis`: border chains, 120°/109.47° checks, sphere fit, OBJ I/O with film groups.
   - `ClusterPacker`: soft-sphere pre-pass to the double-bubble spacing.
 - `harness/`: `dotnet run -c Release -- bench | replay <runDir> [steps] | obj <file.obj> | tune | debug`.
-- `gh/`: `BubbleSolver.template.cs` (GH wrapper + run recorder) → `python gh/build_gh.py` →
-  `gh/BubbleSolver.cs` (**paste this**). `gh/check/` compiles the merged file against Rhino 8's
-  DLLs (`cd gh/check && dotnet build`); it uses a `GH_CHECK` stub for GH-generated members. `gh/SETUP.md` = wiring.
+- `gh/BubbleEngine.cs`: the GH-side logic (live loop, ApplyLive, preview, RunRecorder, RhinoMeshHost), shared by both front ends:
+  - `plugin/` (since 2026-10-16): **the compiled plugin**. `dotnet build plugin -c Release` → `dist/BubbleClusters.gha` (net48,
+    references Rhino 8's DLLs). Component "Bubble Solver" on the Pneuhaus tab. Install/update: `plugin/README.md`.
+  - `gh/BubbleSolver.template.cs`: a ~40-line paste-in shim → `python gh/build_gh.py` → `gh/BubbleSolver.cs` (fallback, same behaviour).
+  `gh/check/` compiles the merged script against Rhino 8's DLLs (`cd gh/check && dotnet build`; `GH_CHECK` stubs). `gh/SETUP.md` = wiring.
 - `runs/`: GH recordings. When Alex asks about a run, read the newest folder's `log.jsonl`
   and `view_*.png`, run `harness obj` on its `mesh_*.obj`, or `harness replay` the folder.
 
-Workflow: edit core → `harness bench` (must still pass) → `build_gh.py` → `gh/check` build →
-Alex pastes `BubbleSolver.cs`.
+Workflow: edit core → `harness bench` (must still pass) → `build_gh.py` + `gh/check` build → `dotnet build plugin -c Release`
+→ commit + push (`origin main`) → Alex restarts Rhino (plugin) or re-pastes (script).
 
 ### Phase 1 status (2026-10-14): built and benchmarked headless, not yet run in GH
 Benchmarks (`harness bench`, CellSize ≈ r/7–r/12):
@@ -306,6 +308,17 @@ interior, matching the fit's interior rule. The interior merge is still untested
   rebuild cell inside the solid; calibration refills the volume. Harness `host hover`: 1 landing, hemisphere R 1.2609.
 - AddRadius 10 into r ~1 clusters (233324, 000150) took the mesh to 72k tris, 3.7 s ticks, 25 s rebuilds. GH now refuses an add whose estimated
   triangles exceed `Settings.MaxTriangles` and says the largest radius that fits. Live radius changes still have no such guard.
+**2026-10-16: speed, round 1.** Measured first: the compiled plugin alone is only ~1.7x per step (the hot loops were already
+array-based), so the real costs were whole-mesh operations. Profiled with `harness remeshperf <fixture>` and the per-stage timing now in every
+rebuild log line ("calibrate / mesh (chop, clean, slivers, remesh) / transfer / checks").
+- `Remesher` rewritten around an incremental vertex→triangle table (`Topo`): edge lookups intersect two small lists; splits, collapses and
+  flips update the table in place; passes after the first only scan edges around vertices changed in the previous pass. Same public API,
+  same rules. One remesh round on a 45k-tri mesh: 544 → 124 ms.
+- Results (single process, Release): rebuild cell01 ~5.3 s → ~2.3 s (remesh 3.0 → 1.1 s); solver periodic remesh 158 → 91 ms; Maintain
+  109 → 52 ms; initial build 2.0 → 1.2 s. Regression set unchanged (bench, adds, pop, pull, raft, host dome/hover/ball, cell01/drag/adds28
+  replays: 0 refused). The host raft once ended with 7/8 landed and 1 resting on top (valid two-layer state, depends on drop details).
+- Mesher: per-node phase cache (chop barely changed: its cost is the polygon clipping, not function evaluation).
+Next speed steps: coarse mesh while interacting + refine when idle; mesh-host distance cache (hand-mesh rebuilds); chop/transfer allocations.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally

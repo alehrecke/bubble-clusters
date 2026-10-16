@@ -240,6 +240,30 @@ public static class Program
             Console.WriteLine(string.Format(CI, "  FlipDelaunay {0:F2} ms", sw.ElapsedMilliseconds / 5.0));
             return 0;
         }
+        if (cmd == "remeshperf")
+        {
+            // Building blocks of the remesher on a relaxed fixture mesh (where rebuild time goes).
+            List<double> rr;
+            var s = LoadFixture(args[1], out rr, new SolverSettings { Rearrange = false });
+            for (int i = 0; i < 100; i++) s.Step();
+            var m = s.Mesh;
+            Console.WriteLine("mesh " + m.V.Count + " verts, " + m.T.Count + " tris");
+            Action<string, Action> time = (label, a) =>
+            {
+                a(); var sw = Stopwatch.StartNew(); for (int i = 0; i < 5; i++) a();
+                Console.WriteLine(string.Format(CI, "  {0,-28} {1,8:F1} ms", label, sw.Elapsed.TotalMilliseconds / 5));
+            };
+            time("EdgeTris", () => m.EdgeTris());
+            time("VertexRegions", () => m.VertexRegions());
+            time("BorderVertices", () => Remesher.BorderVertices(m, m.EdgeTris()));
+            time("Clean", () => m.Clone().Clean());
+            double L = s.TargetEdge;
+            time("SplitLong (1 pass, copy)", () => Remesher.SplitLong(m.Clone(), 4.0 / 3.0 * L, true, s.RegionScale, 1));
+            time("CollapseShort (1 pass, copy)", () => Remesher.CollapseShort(m.Clone(), 0.8 * L, 4.0 / 3.0 * L, s.RegionScale, 1));
+            time("FlipDelaunay (1 pass, copy)", () => Remesher.FlipDelaunay(m.Clone(), 1));
+            time("Remesher.Run (1 it, copy)", () => Remesher.Run(m.Clone(), L, 1, s.RegionScale, 6));
+            return 0;
+        }
         if (cmd == "fit")
         {
             var c = new List<Vec3>(); var r = new List<double>(); double h = 0.1;
