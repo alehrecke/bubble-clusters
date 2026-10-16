@@ -1,0 +1,4 @@
+# pack false (GH run 2026-10-14_231422_557: period-3 border oscillation)
+cell 0.1
+bubble 0 0 0 1
+bubble 0.888 0 0 0.7

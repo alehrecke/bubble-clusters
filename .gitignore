@@ -1,0 +1,14 @@
+# Grasshopper run recordings (large; the ones worth keeping become harness/fixtures/)
+runs/
+
+# Build output
+bin/
+obj/
+*.user
+.vs/
+
+# Replay output written next to fixtures
+**/replay_result.obj
+
+# Unverified recovered GH file (see CLAUDE.md, "RECOVERY NEEDED")
+RECOVERY/

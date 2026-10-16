@@ -1,0 +1,83 @@
+BUBBLE TOOL — GRASSHOPPER WIRING GUIDE
+Phase 1 + 2 Quick Start
+========================================
+
+HOW PARAMETERS WORK IN RHINO 8 C# SCRIPT
+------------------------------------------
+Grasshopper reads the RunScript method signature via reflection and
+auto-creates all input/output sockets when the script compiles.
+You do NOT need to manually set up parameters.
+
+Just paste the code → compile → sockets appear automatically.
+
+Input types in the signature (e.g. List<Point3d>, double, Box, Mesh)
+become typed input sockets. All ref object parameters become output sockets.
+Socket names match the parameter names exactly.
+
+
+STEP 1 — Add components
+  Maths > Script > C# Script   (add three of these)
+  Rename them: [FoamSeeder]   [BubbleCluster]   [BubblePipe]
+
+
+STEP 2 — Paste and compile each component
+  Double-click each component to open the code editor.
+  Select All (Ctrl+A), then paste the corresponding file:
+    FoamSeeder    ← FoamSeeder_Phase2.cs
+    BubbleCluster ← BubbleCluster_Phase1.cs
+    BubblePipe    ← BubbleSkeleton_Pipe.cs
+
+  Click the green "Run" button or press F5 in the editor.
+  All input/output sockets will appear automatically.
+
+
+STEP 3 — Wire components together
+  FoamSeeder.Centers  ──► BubbleCluster.Centers
+  FoamSeeder.Radii    ──► BubbleCluster.Radii
+  BubbleCluster.PlateauBorders ──► BubblePipe.Borders
+
+
+STEP 4 — Add slider inputs
+  FoamSeeder needs:
+    BBox        ← wire a Box component (set size e.g. 80×80×40 mm)
+    Count       ← integer slider  5–40
+    RMin        ← number slider   3.0
+    RMax        ← number slider   9.0
+    Seed        ← integer slider  1–999
+    SurfaceBias ← number slider   0.0  (leave at 0 to start)
+    HostMesh    ← leave disconnected for now
+
+  BubblePipe needs:
+    PipeR       ← number slider   0.3  (wire cross-section radius, mm)
+
+
+STEP 5 — View output
+  BubblePipe.Preview (NurbsCurve) → auto-displays as curves in viewport
+  BubblePipe.Pipes   (Brep)       → right-click → Bake to export
+
+
+MINIMUM WORKING EXAMPLE (no mesh, just a box of bubbles)
+  [Box 80×80×40] ──► FoamSeeder.BBox
+  [Slider 20]    ──► FoamSeeder.Count
+  [Slider 3.0]   ──► FoamSeeder.RMin
+  [Slider 9.0]   ──► FoamSeeder.RMax
+  [Slider 42]    ──► FoamSeeder.Seed
+
+  FoamSeeder → BubbleCluster → BubblePipe
+
+
+TROUBLESHOOTING
+  "0 Plateau borders"   — bubbles too far apart; lower RMin/RMax or raise Count
+  "No bubbles placed"   — box too small for the radii; increase box or lower RMax
+  Red component errors  — recheck that you pasted the full file (including class wrapper)
+  Slow on large Count   — adjacency search is O(N³); works well up to ~80 bubbles
+
+
+WHAT THE OUTPUTS MEAN
+  FoamSeeder.Centers            — bubble center points
+  FoamSeeder.Radii              — bubble radii (parallel list)
+  BubbleCluster.InterfaceSpheres — shared wall spheres between adjacent bubbles
+  BubbleCluster.PlateauBorders  — the junction CIRCLES (120° wire network)
+  BubbleCluster.AdjLines        — adjacency graph edges (debugging)
+  BubblePipe.Pipes              — solid torus-section wires → jewelry output
+  BubblePipe.Preview            — border circles as lightweight curves
