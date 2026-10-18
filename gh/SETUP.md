@@ -116,6 +116,12 @@ current foam and ask the solver for changes. Your own Add / AddAt / Pop inputs k
   border, 1 outer only (the visible ones), 2 inner only; `Spacing` keeps seeds apart; `Pace` = solver steps to wait after a
   batch (0 = until settled). `Seed` -1 = random: Info shows the seed used, so type it into `Seed` to repeat a result you liked
   (the generator's choices repeat; the background rebuild timing in Rhino can still make two runs differ slightly).
+- **Stream Bed** (Pneuhaus → Bubbles): bubbles appear around `Source` (a point upstream), drift along `Flow` (a vector: direction,
+  and its length is the strength, ~0.3 gentle, ~1 brisk), and stick when they touch the bed (the solver's HostPlane/HostMesh)
+  or the cluster already stuck to it. `Sink` drifts them toward the bed (0 = they only stick where they bump into something);
+  `Spread` = spawn disc radius across the flow; `Every` = steps between spawns; `RMin`/`RMax` = sizes; `Exit` = floating bubbles
+  this far downstream of Source are removed; `MaxFree` caps how many float at once. Floating bubbles are dropped in without a
+  rebuild; they join through the normal contact rebuild. Without a host, the largest cluster is what catches them. Seed as above.
 - **Your own generator:** a C# Script component with the `Foam` handle as input. Start from `gh/examples/NodeSprinkle.cs`:
   it uses the handle through `dynamic` (no plugin reference needed). Members are listed at the top of that file and on
   `FoamHandle` in `gh/BubbleEngine.cs`. Batches (`foam.AddBatch`) go in with one rebuild; keep seeds a couple of CellSizes apart.

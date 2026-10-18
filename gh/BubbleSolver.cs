@@ -105,7 +105,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18e";
+    public const string Build = "2026-10-18f";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -757,7 +757,9 @@ public class BubbleEngine
 //   state     Step, Settled, Busy (a rebuild / add / pop is pending), CellSize, MinRadius, Seed
 //   bubbles   BubbleIds, Centroid(k), Radius(k) (target), Pressure(k), BubbleAt(point) (0 = none)
 //   geometry  Borders (polylines), BorderBubbles (bubble ids meeting at each border; 0 = outside air), Nodes
-//   actions   Add(point, r), AddBatch(points, radii, label), Pop(point), Wake()
+//   actions   Add(point, r), AddBatch(points, radii, label), Pop(point), Remove(k), Wake()
+//   floating  InsertFree(point, r) (a free bubble in open space, no rebuild), FreeBubbleIds (bubbles in pieces
+//             not on the host), SetForce(k, vector) / ClearForces() (per-bubble push, e.g. a flow), Note(text)
 public class FoamHandle
 {
     readonly BubbleRun run;
@@ -830,6 +832,44 @@ public class FoamHandle
                   at.Y.ToString("R", CultureInfo.InvariantCulture) + " " + at.Z.ToString("R", CultureInfo.InvariantCulture));
         Wake();
     }
+
+    public void InsertFree(Point3d c, double r)
+    {
+        run.Solver.RequestInsertFree(new Vec3(c.X, c.Y, c.Z), r);
+        Wake();
+    }
+
+    public void Remove(int k) { run.Solver.RequestPop(k); Wake(); }
+
+    public List<int> FreeBubbleIds
+    {
+        get
+        {
+            bool[] onHost;
+            var piece = Contacts.Pieces(run.Solver.Mesh, out onHost);
+            return Enumerable.Range(1, run.Solver.Mesh.BubbleCount).Where(k => piece[k] > 0 && !onHost[piece[k]]).ToList();
+        }
+    }
+
+    // A force density on bubble k (strength ~ Pull/Gather units); kept until changed or cleared.
+    public void SetForce(int k, Vector3d f)
+    {
+        var s = run.Solver;
+        int n = s.Mesh.BubbleCount;
+        if (s.ExtForce == null || s.ExtForce.Length < n + 1)
+        {
+            var a = new Vec3[n + 1];
+            if (s.ExtForce != null) Array.Copy(s.ExtForce, a, s.ExtForce.Length);
+            s.ExtForce = a;
+        }
+        if (k >= 1 && k <= n) s.ExtForce[k] = new Vec3(f.X, f.Y, f.Z);
+        Wake();
+    }
+
+    public void ClearForces() { run.Solver.ExtForce = null; Wake(); }
+
+    // A line in the run recording (generators note their settings so Claude can replay them).
+    public void Note(string text) { run.Event(text); }
 
     // Make the solver run again (it stops scheduling itself once settled).
     public void Wake()
@@ -2206,6 +2246,9 @@ public class FoamSolver
     public double[] TargetVolume;    // per region, index 0 unused: the volume enforced this step
     public double[] DesiredVolume;   // per region: where TargetVolume is heading (ramped by VolumeRate)
     public Vec3[] PullTarget;        // per region: point the bubble is pulled toward (if PullOn)
+    // Per region: an extra force density set by generators (e.g. a stream's flow), applied like Pull/Gather
+    // (volume-neutral). Indices beyond the array, or null, mean no force.
+    public Vec3[] ExtForce;
     public bool[] PullOn;
     public double[] Pressure;        // per region relative to outside, index 0 = 0
     public int Steps;
@@ -2414,6 +2457,55 @@ public class FoamSolver
     }
 
     public double DesiredRadius(int k) { return Math.Pow(3 * DesiredVolume[k] / (4 * Math.PI), 1.0 / 3); }
+
+    // ---- free bubbles (see FreeBubble) ----
+    readonly List<KeyValuePair<Vec3, double>> pendingInserts = new List<KeyValuePair<Vec3, double>>();
+    public int PendingInserts { get { return pendingInserts.Count; } }
+
+    // Drop a free bubble (centre, radius) into open space with no rebuild. Queued, and applied only when no
+    // rebuild is running (a rebuild started earlier would replace the mesh and lose it). The caller should
+    // keep it clear of the foam; if it overlaps, it's added through a normal (rebuild) add instead.
+    public void RequestInsertFree(Vec3 center, double radius) { pendingInserts.Add(new KeyValuePair<Vec3, double>(center, radius)); }
+
+    void ApplyInserts()
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        foreach (var ins in pendingInserts.ToList())
+        {
+            pendingInserts.Remove(ins);
+            Vec3 c = ins.Key;
+            double r = Math.Max(ins.Value, TargetEdge * S.RebuildGridFactor);
+            double gap = double.MaxValue;
+            foreach (var q in Mesh.V) gap = Math.Min(gap, (q - c).Length - r);
+            if (Host != null) gap = Math.Min(gap, Host.Height(c) - r);
+            if (gap < 2 * TargetEdge)
+            {
+                RequestAdd(r, 1, true, c);
+                RearrangeLog.Add("step " + Steps + ": free bubble at " + c + " overlaps the foam; added with a rebuild instead");
+                continue;
+            }
+            int k = Mesh.BubbleCount + 1;
+            double scale = MobiusMesher.ScaleFor(r, TargetEdge, S.EdgesPerRadius);
+            FreeBubble.Append(Mesh, k, c, r, TargetEdge * scale);
+            Mesh.BubbleCount = k;
+            GrowRegion(k, Mesh.Volumes()[k], 4.0 / 3.0 * Math.PI * r * r * r, scale);
+            Added++;
+            prev = null;
+            RebuildTopology();
+            RearrangeLog.Add("step " + Steps + ": free bubble " + k + " (r " + r.ToString("G3", ci) + ") inserted at " + c);
+        }
+    }
+
+    // Extend every per-region array to region k.
+    void GrowRegion(int k, double target, double desired, double scale)
+    {
+        TargetVolume = Grow(TargetVolume, k, target);
+        DesiredVolume = Grow(DesiredVolume, k, desired);
+        Pressure = Grow(Pressure, k, 0);
+        RegionScale = Grow(RegionScale, k, scale);
+        var pt = new Vec3[k + 1]; Array.Copy(PullTarget, pt, Math.Min(PullTarget.Length, k + 1)); PullTarget = pt;
+        var po = new bool[k + 1]; Array.Copy(PullOn, po, Math.Min(PullOn.Length, k + 1)); PullOn = po;
+    }
 
     // ---- popping (see Pop) ----
     // Volume a bubble took over from merged neighbours; SetDesiredRadii adds it back on top of the
@@ -3027,6 +3119,7 @@ public class FoamSolver
     {
         PollRebuild();
         if (pendingJob == null && pendingPops.Count > 0) ApplyPops();
+        if (pendingJob == null && pendingInserts.Count > 0) ApplyInserts();
         // Adds wait until every bubble is back to size: a bubble still inflating from a previous
         // add or rebuild is small, and the next rebuild could lose it ("bubble 18 would vanish").
         if (pendingJob == null && addQueue.Count > 0 && !Reinflating()) StartAdd();
@@ -3126,6 +3219,7 @@ public class FoamSolver
         int nb = Mesh.BubbleCount;
         bool any = S.Gather > 0;
         if (S.Pull > 0) for (int k = 1; k <= nb; k++) if (PullOn[k]) { any = true; break; }
+        if (ExtForce != null) for (int k = 1; k < ExtForce.Length && !any; k++) if (ExtForce[k].LengthSq > 0) any = true;
         if (!any) return;
         var forced = new bool[nb + 1];
         var cen = new double[3 * (nb + 1)];
@@ -3153,6 +3247,11 @@ public class FoamSolver
                 fk[3 * k] = s * (PullTarget[k].X - cx);
                 fk[3 * k + 1] = s * (PullTarget[k].Y - cy);
                 fk[3 * k + 2] = s * (PullTarget[k].Z - cz);
+                forced[k] = true;
+            }
+            if (ExtForce != null && k < ExtForce.Length && ExtForce[k].LengthSq > 0)
+            {
+                fk[3 * k] += ExtForce[k].X; fk[3 * k + 1] += ExtForce[k].Y; fk[3 * k + 2] += ExtForce[k].Z;
                 forced[k] = true;
             }
             if (S.Gather > 0)
@@ -3771,6 +3870,34 @@ public class BubbleFunctions
 // because each side loses volume to the other).
 public static class Contacts
 {
+    // Connected pieces: pieceOf[k] = a representative bubble of k's piece (0 for bubbles with no films);
+    // onHost[rep] = true when any bubble of that piece sits on the host (has a footprint).
+    public static int[] Pieces(FoamMesh m, out bool[] onHost)
+    {
+        int n = m.BubbleCount;
+        var parent = Enumerable.Range(0, n + 1).ToArray();
+        Func<int, int> find = null;
+        find = x => parent[x] == x ? x : (parent[x] = find(parent[x]));
+        var alive = new bool[n + 1];
+        var foot = new bool[n + 1];
+        foreach (var t in m.T)
+        {
+            if (t.Neg > 0) alive[t.Neg] = true;
+            if (t.Pos > 0) alive[t.Pos] = true;
+            if (FoamMesh.IsSolid(t)) { int b = t.Neg == FoamMesh.Solid ? t.Pos : t.Neg; if (b > 0) foot[b] = true; }
+            if (t.Neg > 0 && t.Pos > 0) parent[find(t.Neg)] = find(t.Pos);
+        }
+        var piece = new int[n + 1];
+        onHost = new bool[n + 1];
+        for (int k = 1; k <= n; k++)
+        {
+            if (!alive[k]) continue;
+            piece[k] = find(k);
+            if (foot[k]) onHost[piece[k]] = true;
+        }
+        return piece;
+    }
+
     public static List<Rearranger.Event> Detect(FoamSolver s)
     {
         var m = s.Mesh;
@@ -3958,6 +4085,68 @@ public static class Contacts
     }
 }
 
+// ---- core/FreeBubble.cs ----
+// A free bubble dropped into open space without a rebuild: an icosphere appended to the film mesh as
+// its own piece (region k inside, outside air around it). A lone sphere is already at equilibrium, so it
+// needs no relaxation; when it touches the foam, the normal contact rebuild joins it. Generators that
+// spawn many bubbles (stream bed) would otherwise pay one rebuild per bubble.
+public static class FreeBubble
+{
+    // Icosphere with edges about `edge` long, outward-facing, labelled (Neg = region, Pos = 0).
+    public static void Append(FoamMesh m, int region, Vec3 center, double radius, double edge)
+    {
+        double t = (1 + Math.Sqrt(5)) / 2;
+        var v = new List<Vec3>
+        {
+            new Vec3(-1, t, 0), new Vec3(1, t, 0), new Vec3(-1, -t, 0), new Vec3(1, -t, 0),
+            new Vec3(0, -1, t), new Vec3(0, 1, t), new Vec3(0, -1, -t), new Vec3(0, 1, -t),
+            new Vec3(t, 0, -1), new Vec3(t, 0, 1), new Vec3(-t, 0, -1), new Vec3(-t, 0, 1),
+        };
+        var f = new List<int[]>
+        {
+            new[] { 0, 11, 5 }, new[] { 0, 5, 1 }, new[] { 0, 1, 7 }, new[] { 0, 7, 10 }, new[] { 0, 10, 11 },
+            new[] { 1, 5, 9 }, new[] { 5, 11, 4 }, new[] { 11, 10, 2 }, new[] { 10, 7, 6 }, new[] { 7, 1, 8 },
+            new[] { 3, 9, 4 }, new[] { 3, 4, 2 }, new[] { 3, 2, 6 }, new[] { 3, 6, 8 }, new[] { 3, 8, 9 },
+            new[] { 4, 9, 5 }, new[] { 2, 4, 11 }, new[] { 6, 2, 10 }, new[] { 8, 6, 7 }, new[] { 9, 8, 1 },
+        };
+        for (int i = 0; i < v.Count; i++) v[i] = v[i].Normalized();
+        // Subdivide until edges are short enough (icosahedron edge = 1.0515 r).
+        int levels = 0;
+        double e0 = 1.0515 * radius;
+        while (e0 / (1 << levels) > 1.15 * edge && levels < 6) levels++;
+        for (int l = 0; l < levels; l++)
+        {
+            var mid = new Dictionary<long, int>();
+            Func<int, int, int> midpoint = (a, b) =>
+            {
+                long key = a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
+                int idx;
+                if (mid.TryGetValue(key, out idx)) return idx;
+                idx = v.Count;
+                v.Add(((v[a] + v[b]) * 0.5).Normalized());
+                mid[key] = idx;
+                return idx;
+            };
+            var nf = new List<int[]>(f.Count * 4);
+            foreach (var tri in f)
+            {
+                int a = midpoint(tri[0], tri[1]), b = midpoint(tri[1], tri[2]), c = midpoint(tri[2], tri[0]);
+                nf.Add(new[] { tri[0], a, c }); nf.Add(new[] { tri[1], b, a }); nf.Add(new[] { tri[2], c, b }); nf.Add(new[] { a, b, c });
+            }
+            f = nf;
+        }
+        // Orientation check: the normal must point out of the bubble (into the outside air, region 0).
+        double vol = 0;
+        foreach (var tri in f) vol += Vec3.Dot(v[tri[0]], Vec3.Cross(v[tri[1]], v[tri[2]]));
+        bool flip = vol < 0;
+        int baseIdx = m.V.Count;
+        foreach (var p in v) m.V.Add(center + p * radius);
+        foreach (var tri in f)
+            m.T.Add(flip ? new FoamTri(baseIdx + tri[0], baseIdx + tri[2], baseIdx + tri[1], region, 0)
+                         : new FoamTri(baseIdx + tri[0], baseIdx + tri[1], baseIdx + tri[2], region, 0));
+    }
+}
+
 // ---- core/Generators.cs ----
 // Generators decide where new bubbles go; the solver inserts them (FoamSolver.RequestAddBatch, one
 // rebuild per batch). They run between solver ticks: in Grasshopper as components downstream of the
@@ -4038,6 +4227,94 @@ public static class BorderDetail
             picks.Add(new Pick { At = at, Radius = r, Regions = cand[ci].Value });
         }
         return picks;
+    }
+}
+
+public class StreamSettings
+{
+    public Vec3 Source;               // centre of the spawn disc (upstream)
+    public Vec3 Flow = new Vec3(1, 0, 0);   // flow direction x strength (~0.3 gentle, ~1 brisk)
+    public double Spread = 1;         // spawn disc radius, perpendicular to the flow
+    public int Every = 120;           // solver steps between spawns
+    public double RMin = 0.3, RMax = 0.7;
+    public double Sink = 0;           // drift toward the host (the bed), same units as Flow
+    public double Exit = 15;          // free bubbles further than this downstream of Source are removed
+    public int MaxFree = 8;           // at most this many floating at once
+}
+
+// Stream bed: bubbles are spawned upstream, carried by the flow, and stick when they touch the bed (the
+// host) or the stuck cluster; the rest float away and are removed. Call Tick between solver ticks.
+public static class StreamBed
+{
+    public class State
+    {
+        public int NextSpawn = int.MinValue, Spawned, Removed;
+        public HashSet<int> RemoveAsked = new HashSet<int>();
+        public List<Vec3> LastSpawn = new List<Vec3>();
+    }
+
+    public static string Tick(FoamSolver s, StreamSettings set, Random rng, State st)
+    {
+        var m = s.Mesh;
+        int n = m.BubbleCount;
+        bool[] onHost;
+        var piece = Contacts.Pieces(m, out onHost);
+        // Stuck pieces: on the host; with no host, the largest piece (the cluster being built).
+        var stuck = new bool[n + 1];
+        if (s.Host != null) { for (int k = 1; k <= n; k++) stuck[k] = piece[k] > 0 && onHost[piece[k]]; }
+        else
+        {
+            var size = new Dictionary<int, int>();
+            for (int k = 1; k <= n; k++) if (piece[k] > 0) { int c; size.TryGetValue(piece[k], out c); size[piece[k]] = c + 1; }
+            int big = size.Count == 0 ? 0 : size.OrderByDescending(kv => kv.Value).First().Key;
+            for (int k = 1; k <= n; k++) stuck[k] = piece[k] > 0 && piece[k] == big && size[big] > 1;
+        }
+        var cen = s.Centroids();
+        Vec3 dir = set.Flow.LengthSq > 0 ? set.Flow.Normalized() : new Vec3(1, 0, 0);
+        // Forces on the floating bubbles; none on stuck ones.
+        var force = new Vec3[n + 1];
+        int floating = 0;
+        for (int k = 1; k <= n; k++)
+        {
+            if (piece[k] == 0 || stuck[k] || s.IsDead(k)) continue;
+            floating++;
+            double r = Math.Max(s.DesiredRadius(k), 1e-6);
+            Vec3 f = set.Flow / r;
+            if (set.Sink != 0 && s.Host != null) f = f - s.Host.Normal(cen[k]) * (set.Sink / r);
+            force[k] = f;
+            // Left the domain downstream: remove.
+            if (Vec3.Dot(cen[k] - set.Source, dir) > set.Exit && !st.RemoveAsked.Contains(k))
+            {
+                st.RemoveAsked.Add(k);
+                s.RequestPop(k);
+                st.Removed++;
+            }
+        }
+        s.ExtForce = force;
+        // Spawn.
+        st.LastSpawn.Clear();
+        if (s.Steps >= st.NextSpawn && floating < set.MaxFree && s.PendingInserts == 0)
+        {
+            Vec3 u = Vec3.Cross(dir, Math.Abs(dir.Z) < 0.9 ? new Vec3(0, 0, 1) : new Vec3(1, 0, 0)).Normalized();
+            Vec3 w = Vec3.Cross(dir, u);
+            double a = 2 * Math.PI * rng.NextDouble(), rr = set.Spread * Math.Sqrt(rng.NextDouble());
+            Vec3 p = set.Source + u * (rr * Math.Cos(a)) + w * (rr * Math.Sin(a));
+            double rad = set.RMin + (set.RMax - set.RMin) * rng.NextDouble();
+            // Keep clear of everything (a bubble just spawned may still be near the source).
+            double gap = double.MaxValue;
+            foreach (var q in m.V) gap = Math.Min(gap, (q - p).Length - rad);
+            if (s.Host != null) gap = Math.Min(gap, s.Host.Height(p) - rad);
+            if (gap > 2 * s.TargetEdge)
+            {
+                s.RequestInsertFree(p, rad);
+                st.Spawned++;
+                st.LastSpawn.Add(p);
+                st.NextSpawn = s.Steps + set.Every;
+            }
+        }
+        return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "spawned {0}, removed {1}, floating {2}, stuck {3}", st.Spawned, st.Removed, floating,
+            Enumerable.Range(1, n).Count(k => stuck[k] && !s.IsDead(k)));
     }
 }
 

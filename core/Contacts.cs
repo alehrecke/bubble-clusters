@@ -17,6 +17,34 @@ using System.Linq;
 // because each side loses volume to the other).
 public static class Contacts
 {
+    // Connected pieces: pieceOf[k] = a representative bubble of k's piece (0 for bubbles with no films);
+    // onHost[rep] = true when any bubble of that piece sits on the host (has a footprint).
+    public static int[] Pieces(FoamMesh m, out bool[] onHost)
+    {
+        int n = m.BubbleCount;
+        var parent = Enumerable.Range(0, n + 1).ToArray();
+        Func<int, int> find = null;
+        find = x => parent[x] == x ? x : (parent[x] = find(parent[x]));
+        var alive = new bool[n + 1];
+        var foot = new bool[n + 1];
+        foreach (var t in m.T)
+        {
+            if (t.Neg > 0) alive[t.Neg] = true;
+            if (t.Pos > 0) alive[t.Pos] = true;
+            if (FoamMesh.IsSolid(t)) { int b = t.Neg == FoamMesh.Solid ? t.Pos : t.Neg; if (b > 0) foot[b] = true; }
+            if (t.Neg > 0 && t.Pos > 0) parent[find(t.Neg)] = find(t.Pos);
+        }
+        var piece = new int[n + 1];
+        onHost = new bool[n + 1];
+        for (int k = 1; k <= n; k++)
+        {
+            if (!alive[k]) continue;
+            piece[k] = find(k);
+            if (foot[k]) onHost[piece[k]] = true;
+        }
+        return piece;
+    }
+
     public static List<Rearranger.Event> Detect(FoamSolver s)
     {
         var m = s.Mesh;

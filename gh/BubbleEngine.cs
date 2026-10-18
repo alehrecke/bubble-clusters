@@ -24,7 +24,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18e";
+    public const string Build = "2026-10-18f";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -676,7 +676,9 @@ public class BubbleEngine
 //   state     Step, Settled, Busy (a rebuild / add / pop is pending), CellSize, MinRadius, Seed
 //   bubbles   BubbleIds, Centroid(k), Radius(k) (target), Pressure(k), BubbleAt(point) (0 = none)
 //   geometry  Borders (polylines), BorderBubbles (bubble ids meeting at each border; 0 = outside air), Nodes
-//   actions   Add(point, r), AddBatch(points, radii, label), Pop(point), Wake()
+//   actions   Add(point, r), AddBatch(points, radii, label), Pop(point), Remove(k), Wake()
+//   floating  InsertFree(point, r) (a free bubble in open space, no rebuild), FreeBubbleIds (bubbles in pieces
+//             not on the host), SetForce(k, vector) / ClearForces() (per-bubble push, e.g. a flow), Note(text)
 public class FoamHandle
 {
     readonly BubbleRun run;
@@ -749,6 +751,44 @@ public class FoamHandle
                   at.Y.ToString("R", CultureInfo.InvariantCulture) + " " + at.Z.ToString("R", CultureInfo.InvariantCulture));
         Wake();
     }
+
+    public void InsertFree(Point3d c, double r)
+    {
+        run.Solver.RequestInsertFree(new Vec3(c.X, c.Y, c.Z), r);
+        Wake();
+    }
+
+    public void Remove(int k) { run.Solver.RequestPop(k); Wake(); }
+
+    public List<int> FreeBubbleIds
+    {
+        get
+        {
+            bool[] onHost;
+            var piece = Contacts.Pieces(run.Solver.Mesh, out onHost);
+            return Enumerable.Range(1, run.Solver.Mesh.BubbleCount).Where(k => piece[k] > 0 && !onHost[piece[k]]).ToList();
+        }
+    }
+
+    // A force density on bubble k (strength ~ Pull/Gather units); kept until changed or cleared.
+    public void SetForce(int k, Vector3d f)
+    {
+        var s = run.Solver;
+        int n = s.Mesh.BubbleCount;
+        if (s.ExtForce == null || s.ExtForce.Length < n + 1)
+        {
+            var a = new Vec3[n + 1];
+            if (s.ExtForce != null) Array.Copy(s.ExtForce, a, s.ExtForce.Length);
+            s.ExtForce = a;
+        }
+        if (k >= 1 && k <= n) s.ExtForce[k] = new Vec3(f.X, f.Y, f.Z);
+        Wake();
+    }
+
+    public void ClearForces() { run.Solver.ExtForce = null; Wake(); }
+
+    // A line in the run recording (generators note their settings so Claude can replay them).
+    public void Note(string text) { run.Event(text); }
 
     // Make the solver run again (it stops scheduling itself once settled).
     public void Wake()

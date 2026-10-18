@@ -57,6 +57,9 @@ public class FoamSolver
     public double[] TargetVolume;    // per region, index 0 unused: the volume enforced this step
     public double[] DesiredVolume;   // per region: where TargetVolume is heading (ramped by VolumeRate)
     public Vec3[] PullTarget;        // per region: point the bubble is pulled toward (if PullOn)
+    // Per region: an extra force density set by generators (e.g. a stream's flow), applied like Pull/Gather
+    // (volume-neutral). Indices beyond the array, or null, mean no force.
+    public Vec3[] ExtForce;
     public bool[] PullOn;
     public double[] Pressure;        // per region relative to outside, index 0 = 0
     public int Steps;
@@ -265,6 +268,55 @@ public class FoamSolver
     }
 
     public double DesiredRadius(int k) { return Math.Pow(3 * DesiredVolume[k] / (4 * Math.PI), 1.0 / 3); }
+
+    // ---- free bubbles (see FreeBubble) ----
+    readonly List<KeyValuePair<Vec3, double>> pendingInserts = new List<KeyValuePair<Vec3, double>>();
+    public int PendingInserts { get { return pendingInserts.Count; } }
+
+    // Drop a free bubble (centre, radius) into open space with no rebuild. Queued, and applied only when no
+    // rebuild is running (a rebuild started earlier would replace the mesh and lose it). The caller should
+    // keep it clear of the foam; if it overlaps, it's added through a normal (rebuild) add instead.
+    public void RequestInsertFree(Vec3 center, double radius) { pendingInserts.Add(new KeyValuePair<Vec3, double>(center, radius)); }
+
+    void ApplyInserts()
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        foreach (var ins in pendingInserts.ToList())
+        {
+            pendingInserts.Remove(ins);
+            Vec3 c = ins.Key;
+            double r = Math.Max(ins.Value, TargetEdge * S.RebuildGridFactor);
+            double gap = double.MaxValue;
+            foreach (var q in Mesh.V) gap = Math.Min(gap, (q - c).Length - r);
+            if (Host != null) gap = Math.Min(gap, Host.Height(c) - r);
+            if (gap < 2 * TargetEdge)
+            {
+                RequestAdd(r, 1, true, c);
+                RearrangeLog.Add("step " + Steps + ": free bubble at " + c + " overlaps the foam; added with a rebuild instead");
+                continue;
+            }
+            int k = Mesh.BubbleCount + 1;
+            double scale = MobiusMesher.ScaleFor(r, TargetEdge, S.EdgesPerRadius);
+            FreeBubble.Append(Mesh, k, c, r, TargetEdge * scale);
+            Mesh.BubbleCount = k;
+            GrowRegion(k, Mesh.Volumes()[k], 4.0 / 3.0 * Math.PI * r * r * r, scale);
+            Added++;
+            prev = null;
+            RebuildTopology();
+            RearrangeLog.Add("step " + Steps + ": free bubble " + k + " (r " + r.ToString("G3", ci) + ") inserted at " + c);
+        }
+    }
+
+    // Extend every per-region array to region k.
+    void GrowRegion(int k, double target, double desired, double scale)
+    {
+        TargetVolume = Grow(TargetVolume, k, target);
+        DesiredVolume = Grow(DesiredVolume, k, desired);
+        Pressure = Grow(Pressure, k, 0);
+        RegionScale = Grow(RegionScale, k, scale);
+        var pt = new Vec3[k + 1]; Array.Copy(PullTarget, pt, Math.Min(PullTarget.Length, k + 1)); PullTarget = pt;
+        var po = new bool[k + 1]; Array.Copy(PullOn, po, Math.Min(PullOn.Length, k + 1)); PullOn = po;
+    }
 
     // ---- popping (see Pop) ----
     // Volume a bubble took over from merged neighbours; SetDesiredRadii adds it back on top of the
@@ -878,6 +930,7 @@ public class FoamSolver
     {
         PollRebuild();
         if (pendingJob == null && pendingPops.Count > 0) ApplyPops();
+        if (pendingJob == null && pendingInserts.Count > 0) ApplyInserts();
         // Adds wait until every bubble is back to size: a bubble still inflating from a previous
         // add or rebuild is small, and the next rebuild could lose it ("bubble 18 would vanish").
         if (pendingJob == null && addQueue.Count > 0 && !Reinflating()) StartAdd();
@@ -977,6 +1030,7 @@ public class FoamSolver
         int nb = Mesh.BubbleCount;
         bool any = S.Gather > 0;
         if (S.Pull > 0) for (int k = 1; k <= nb; k++) if (PullOn[k]) { any = true; break; }
+        if (ExtForce != null) for (int k = 1; k < ExtForce.Length && !any; k++) if (ExtForce[k].LengthSq > 0) any = true;
         if (!any) return;
         var forced = new bool[nb + 1];
         var cen = new double[3 * (nb + 1)];
@@ -1004,6 +1058,11 @@ public class FoamSolver
                 fk[3 * k] = s * (PullTarget[k].X - cx);
                 fk[3 * k + 1] = s * (PullTarget[k].Y - cy);
                 fk[3 * k + 2] = s * (PullTarget[k].Z - cz);
+                forced[k] = true;
+            }
+            if (ExtForce != null && k < ExtForce.Length && ExtForce[k].LengthSq > 0)
+            {
+                fk[3 * k] += ExtForce[k].X; fk[3 * k + 1] += ExtForce[k].Y; fk[3 * k + 2] += ExtForce[k].Z;
                 forced[k] = true;
             }
             if (S.Gather > 0)

@@ -349,6 +349,17 @@ Add/AddBatch/Pop/Wake. Scripts use it via `dynamic` (example `gh/examples/NodeSp
 - Recorder logs batches; `replaylive` replays them (and generator Add/Pop).
 - Next generator ideas from Alex: stream bed (bubbles float by and collect; needs direct insertion of free bubbles without a rebuild,
   flow fields, removal downstream). Alex wants generative pen plots: random seeds fine, reproducibility nice-to-have.
+**2026-10-18 (build f): Stream Bed generator.**
+- `FreeBubble.Append` + `FoamSolver.RequestInsertFree`: an icosphere appended as its own piece, no rebuild; queued and applied only with
+  no rebuild pending; if it would overlap the foam (gap < 2 edges) it falls back to a normal add. `GrowRegion` extends per-region arrays.
+- `FoamSolver.ExtForce` (per-region force density, folded into ApplyPull, volume-neutral). `Contacts.Pieces` (piece per bubble +
+  on-host flag).
+- `StreamBed.Tick` (core/Generators.cs): stuck = piece on the host (no host: the largest piece); floating bubbles get Flow/r (+ Sink
+  toward the host); removed past Exit downstream; spawns on a disc across the flow every `Every` steps, up to MaxFree floating.
+  Plugin `StreamBedComponent` (keeps the solver awake; clears forces on Run off; notes "stream generator seed ... settings" in the run log).
+  Handle: InsertFree, Remove, FreeBubbleIds, SetForce, ClearForces, Note.
+- Harness `stream [steps] [seed] [flow] [sink]`: 3 domes on a plane; sink 0.25 → 36 spawned, all stuck, 38 rebuilds, 0 refused, volumes
+  exact; sink 0 → 22 spawned, 7 floated past and were removed, 11 stuck on the domes. `replaylive` re-runs a recorded stream generator.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally

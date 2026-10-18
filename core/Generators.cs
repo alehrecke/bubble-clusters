@@ -83,3 +83,91 @@ public static class BorderDetail
         return picks;
     }
 }
+
+public class StreamSettings
+{
+    public Vec3 Source;               // centre of the spawn disc (upstream)
+    public Vec3 Flow = new Vec3(1, 0, 0);   // flow direction x strength (~0.3 gentle, ~1 brisk)
+    public double Spread = 1;         // spawn disc radius, perpendicular to the flow
+    public int Every = 120;           // solver steps between spawns
+    public double RMin = 0.3, RMax = 0.7;
+    public double Sink = 0;           // drift toward the host (the bed), same units as Flow
+    public double Exit = 15;          // free bubbles further than this downstream of Source are removed
+    public int MaxFree = 8;           // at most this many floating at once
+}
+
+// Stream bed: bubbles are spawned upstream, carried by the flow, and stick when they touch the bed (the
+// host) or the stuck cluster; the rest float away and are removed. Call Tick between solver ticks.
+public static class StreamBed
+{
+    public class State
+    {
+        public int NextSpawn = int.MinValue, Spawned, Removed;
+        public HashSet<int> RemoveAsked = new HashSet<int>();
+        public List<Vec3> LastSpawn = new List<Vec3>();
+    }
+
+    public static string Tick(FoamSolver s, StreamSettings set, Random rng, State st)
+    {
+        var m = s.Mesh;
+        int n = m.BubbleCount;
+        bool[] onHost;
+        var piece = Contacts.Pieces(m, out onHost);
+        // Stuck pieces: on the host; with no host, the largest piece (the cluster being built).
+        var stuck = new bool[n + 1];
+        if (s.Host != null) { for (int k = 1; k <= n; k++) stuck[k] = piece[k] > 0 && onHost[piece[k]]; }
+        else
+        {
+            var size = new Dictionary<int, int>();
+            for (int k = 1; k <= n; k++) if (piece[k] > 0) { int c; size.TryGetValue(piece[k], out c); size[piece[k]] = c + 1; }
+            int big = size.Count == 0 ? 0 : size.OrderByDescending(kv => kv.Value).First().Key;
+            for (int k = 1; k <= n; k++) stuck[k] = piece[k] > 0 && piece[k] == big && size[big] > 1;
+        }
+        var cen = s.Centroids();
+        Vec3 dir = set.Flow.LengthSq > 0 ? set.Flow.Normalized() : new Vec3(1, 0, 0);
+        // Forces on the floating bubbles; none on stuck ones.
+        var force = new Vec3[n + 1];
+        int floating = 0;
+        for (int k = 1; k <= n; k++)
+        {
+            if (piece[k] == 0 || stuck[k] || s.IsDead(k)) continue;
+            floating++;
+            double r = Math.Max(s.DesiredRadius(k), 1e-6);
+            Vec3 f = set.Flow / r;
+            if (set.Sink != 0 && s.Host != null) f = f - s.Host.Normal(cen[k]) * (set.Sink / r);
+            force[k] = f;
+            // Left the domain downstream: remove.
+            if (Vec3.Dot(cen[k] - set.Source, dir) > set.Exit && !st.RemoveAsked.Contains(k))
+            {
+                st.RemoveAsked.Add(k);
+                s.RequestPop(k);
+                st.Removed++;
+            }
+        }
+        s.ExtForce = force;
+        // Spawn.
+        st.LastSpawn.Clear();
+        if (s.Steps >= st.NextSpawn && floating < set.MaxFree && s.PendingInserts == 0)
+        {
+            Vec3 u = Vec3.Cross(dir, Math.Abs(dir.Z) < 0.9 ? new Vec3(0, 0, 1) : new Vec3(1, 0, 0)).Normalized();
+            Vec3 w = Vec3.Cross(dir, u);
+            double a = 2 * Math.PI * rng.NextDouble(), rr = set.Spread * Math.Sqrt(rng.NextDouble());
+            Vec3 p = set.Source + u * (rr * Math.Cos(a)) + w * (rr * Math.Sin(a));
+            double rad = set.RMin + (set.RMax - set.RMin) * rng.NextDouble();
+            // Keep clear of everything (a bubble just spawned may still be near the source).
+            double gap = double.MaxValue;
+            foreach (var q in m.V) gap = Math.Min(gap, (q - p).Length - rad);
+            if (s.Host != null) gap = Math.Min(gap, s.Host.Height(p) - rad);
+            if (gap > 2 * s.TargetEdge)
+            {
+                s.RequestInsertFree(p, rad);
+                st.Spawned++;
+                st.LastSpawn.Add(p);
+                st.NextSpawn = s.Steps + set.Every;
+            }
+        }
+        return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "spawned {0}, removed {1}, floating {2}, stuck {3}", st.Spawned, st.Removed, floating,
+            Enumerable.Range(1, n).Count(k => stuck[k] && !s.IsDead(k)));
+    }
+}

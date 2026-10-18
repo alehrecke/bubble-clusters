@@ -359,6 +359,47 @@ public static class Program
         if (cmd == "big") { BigTests(args.Length > 1 ? args[1] : "all"); return 0; }
         if (cmd == "rebuilddebug") { RebuildDebug(args[1], int.Parse(args[2]), int.Parse(args[3])); return 0; }
         if (cmd == "failrepro") { FailRepro(args[1], int.Parse(args[2]), args.Length > 3 ? args[3] : "any"); return 0; }
+        if (cmd == "stream")
+        {
+            // Stream bed: 3 domes on a plane, bubbles spawned upstream drift along +x and collect.
+            //   stream [steps] [seed] [flow] [sink]
+            int steps = args.Length > 1 ? int.Parse(args[1]) : 6000, seed = args.Length > 2 ? int.Parse(args[2]) : 1;
+            var plane = new PlaneHost(Vec3.Zero, new Vec3(0, 0, 1));
+            var c = new List<Vec3> { new Vec3(0, 0, 0.3), new Vec3(1.4, 0.6, 0.3), new Vec3(0.8, -1.2, 0.3) };
+            var r = new List<double> { 0.8, 0.7, 0.6 };
+            string info;
+            var s = new FoamSolver(MobiusMesher.Build(c, r, 0.12, out info, plane),
+                new SolverSettings { AsyncRearrange = true, SimulatedDelay = int.Parse(Environment.GetEnvironmentVariable("DELAY") ?? "60") }) { Host = plane };
+            s.SetTargetRadii(r);
+            var set = new StreamSettings
+            {
+                Source = new Vec3(-6, 0, 1.0), Flow = new Vec3(args.Length > 3 ? double.Parse(args[3], CI) : 0.5, 0, 0),
+                Spread = 1.5, Every = 80, RMin = 0.3, RMax = 0.6, Sink = args.Length > 4 ? double.Parse(args[4], CI) : 0.25, Exit = 10, MaxFree = 6,
+            };
+            var rng = new Random(seed); var st = new StreamBed.State();
+            var sw = Stopwatch.StartNew();
+            int refused = 0, rebuilt = 0; string last = "";
+            for (int i = 0; i < steps; i++)
+            {
+                if (i % 25 == 0) last = StreamBed.Tick(s, set, rng, st);   // GH: once per tick (~25-50 steps)
+                s.Step();
+                foreach (var l in s.RearrangeLog)
+                {
+                    if (l.Contains("refused")) { refused++; Console.WriteLine("   " + (l.Length > 220 ? l.Substring(0, 220) : l)); }
+                    if (l.Contains("-> rebuilt")) rebuilt++;
+                }
+                s.RearrangeLog.Clear();
+                if ((i + 1) % 1000 == 0)
+                {
+                    var rep = FoamAnalysis.Report(s).Split('\n');
+                    Console.WriteLine(string.Format(CI, "  step {0}: {1}; rebuilds {2}, refused {3}, tris {4}, {5:F0} s | {6}", s.Steps, last, rebuilt, refused, s.Mesh.T.Count, sw.Elapsed.TotalSeconds, rep[2]));
+                }
+            }
+            var vol = s.Mesh.Volumes();
+            var live = Enumerable.Range(1, s.Mesh.BubbleCount).Where(k => !s.IsDead(k) && vol[k] > 0).ToList();
+            Console.WriteLine("  volume/desired (live): " + string.Join(" ", live.Select(k => (vol[k] / s.DesiredVolume[k]).ToString("F2", CI))));
+            return 0;
+        }
         if (cmd == "gen")
         {
             // Border Detail generator: batches on a fixture, synchronous (deterministic), then relax.
@@ -638,6 +679,7 @@ public static class Program
         var radii = new SortedDictionary<int, List<double>>();
         var pops = new SortedDictionary<int, List<Vec3>>();
         var batches = new SortedDictionary<int, List<Tuple<string, List<Vec3>, List<double>>>>();
+        var streams = new SortedDictionary<int, string>();   // step -> stream generator settings ("" = off)
         var pulls = new SortedDictionary<int, KeyValuePair<double, Dictionary<int, Vec3>>>();
         var stepRx = new System.Text.RegularExpressions.Regex(@"^step (\d+): (.*)$");
         foreach (var line in File.ReadLines(Path.Combine(dir, "log.jsonl")))
@@ -663,6 +705,8 @@ public static class Program
                 {
                     gathers[st] = double.Parse(what.Substring(10), CI);
                 }
+                if (what.StartsWith("stream generator seed ")) streams[st] = what.Substring("stream generator ".Length);
+                if (what == "stream generator off") streams[st] = "";
                 // Generator batches: "batch of N requested by LABEL: x y z r R; x y z r R; ..."
                 var bm = System.Text.RegularExpressions.Regex.Match(what, @"^batch of \d+ requested by ([^:]*): (.*)$");
                 if (bm.Success)
@@ -728,6 +772,25 @@ public static class Program
             }
             List<double> rr; if (radii.TryGetValue(st, out rr)) s.SetDesiredRadii(rr);
             List<Vec3> pp; if (pops.TryGetValue(st, out pp)) foreach (var p in pp) s.RequestPop(0, p);
+            string sg;
+            if (streams.TryGetValue(st, out sg))
+            {
+                if (sg == "") { streamSet = null; s.ExtForce = null; }
+                else
+                {
+                    // "seed S source x y z flow x y z spread a every n rmin a rmax b sink c exit d maxfree m"
+                    var f = sg.Split(' ');
+                    Func<int, double> d = fi => double.Parse(f[fi], CI);
+                    streamRng = new Random(int.Parse(f[1]));
+                    streamState = new StreamBed.State();
+                    streamSet = new StreamSettings
+                    {
+                        Source = new Vec3(d(3), d(4), d(5)), Flow = new Vec3(d(7), d(8), d(9)), Spread = d(11), Every = int.Parse(f[13]),
+                        RMin = d(15), RMax = d(17), Sink = d(19), Exit = d(21), MaxFree = int.Parse(f[23]),
+                    };
+                }
+            }
+            if (streamSet != null && st % 25 == 0) StreamBed.Tick(s, streamSet, streamRng, streamState);
             List<Tuple<string, List<Vec3>, List<double>>> bb;
             if (batches.TryGetValue(st, out bb)) foreach (var bt in bb) s.RequestAddBatch(bt.Item2, bt.Item3, bt.Item1);
             KeyValuePair<double, Dictionary<int, Vec3>> pv;
@@ -758,6 +821,7 @@ public static class Program
     }
 
     static FoamSolver LastReplay;
+    static StreamSettings streamSet; static Random streamRng; static StreamBed.State streamState;
     static Func<FoamSolver, bool> ReplayStop;
 
     // Replay until the first refused rebuild (optionally of a given kind), then re-run exactly that rebuild
