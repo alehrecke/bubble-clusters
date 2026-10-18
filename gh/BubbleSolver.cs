@@ -102,6 +102,10 @@ public class Script_Instance : GH_ScriptInstance
 
 public static class Settings
 {
+    // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
+    // run can be matched to the build that made it. Format: date + letter.
+    public const string Build = "2026-10-18c";
+
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
     public static readonly double Dt = 0.2;
@@ -409,6 +413,7 @@ public class BubbleEngine
             run.LastReportTick = run.Ticks;
         }
         var sb = new StringBuilder();
+        sb.AppendLine("Bubble Clusters build " + Settings.Build);
         sb.AppendLine(run.Settled ? "SETTLED (" + run.StopReason + ")" : (Run ? "running..." : "paused (set Run to relax)"));
         if (s.RebuildPending) sb.AppendLine("rearranging: building the new mesh in the background...");
         foreach (var w in run.Warnings) sb.AppendLine("WARNING: " + w);
@@ -831,7 +836,7 @@ public class RunRecorder
         var fields = typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Static)
                                      .Select(f => Json.Pair(f.Name, f.GetValue(null)))
                                      .Concat(typeof(SolverSettings).GetFields().Select(f => Json.Pair("solver." + f.Name, f.GetValue(set))));
-        Append("{\"type\":\"run\",\"started\":" + Json.Str(DateTime.Now.ToString("s")) + ",\"bubbles\":" + c.Count +
+        Append("{\"type\":\"run\",\"build\":" + Json.Str(Settings.Build) + ",\"started\":" + Json.Str(DateTime.Now.ToString("s")) + ",\"bubbles\":" + c.Count +
                ",\"mesh\":" + Json.Str(meshInfo) + ",\"settings\":{" + string.Join(",", fields) + "}}");
     }
 

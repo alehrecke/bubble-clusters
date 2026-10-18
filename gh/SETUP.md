@@ -127,6 +127,8 @@ Colours, transparency and line weight are in `Settings` at the top of the script
 - `Caps`: the outer films (each bubble's surface facing the air).
 - The plugin always fills its outputs. The paste-in script fills an output only if it's wired when the component solves: wire it before the run settles, or press Reset.
 
+Info starts with "Bubble Clusters build <date+letter>": tell Claude this when something looks off, so it knows which version ran.
+
 ## 6. Recordings (how Claude sees your run)
 Each rebuild writes `runs/<timestamp>/` (newest 5 kept):
 `inputs.txt` (exact replay input), `log.jsonl` (per tick: area, volume error, pressures),
