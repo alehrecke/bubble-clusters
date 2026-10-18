@@ -90,6 +90,9 @@ Read these pages at the start of any session before writing code:
 
 Workflow: edit core → `harness bench` (must still pass) → `build_gh.py` + `gh/check` build → `dotnet build plugin -c Release`
 → commit + push (`origin main`) → Alex restarts Rhino (plugin) or re-pastes (script).
+**Bump `Settings.Build` (gh/BubbleEngine.cs) with every change Alex will run.** It's the first line of Info and the "build" field of each
+run's log header. Check it before analysing a run: the 2026-10-18_123315 run was still the previous plugin (Rhino not restarted).
+Triangle limit: `Settings.MaxTriangles` = 100k total (raised from 60k on 2026-10-18; `harness budget <runDir>` shows a cluster's cost).
 
 ### Phase 1 status (2026-10-14): built and benchmarked headless, not yet run in GH
 Benchmarks (`harness bench`, CellSize ≈ r/7–r/12):
