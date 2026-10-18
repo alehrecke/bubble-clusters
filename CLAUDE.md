@@ -336,6 +336,19 @@ an r 10 bubble went in, then every rebuild was refused ("bubble 8 would vanish 0
 - Harness: `replaylive` is now deterministic (rebuild at once, applied `SimulatedDelay` = 60 steps later; `DELAY=0` for real async).
   `failrepro <fixture> <steps> [kind]` replays to the first refused rebuild and re-runs that exact job (`RebuildJob.Retry`, `Fn0`;
   `NORESCUE=1`). `rebuilddebug`, `budget`.
+**2026-10-18 (build e): generators (Option C, chosen by Alex).** Architecture: the solver outputs `Foam` = `FoamHandle` (live, in
+gh/BubbleEngine.cs); generators sit downstream (no GH cycle), re-solve every solver tick, and push requests; `Wake()` restarts a settled
+solver. API: Step/Settled/Busy/CellSize/MinRadius, BubbleIds/Centroid/Radius/Pressure/BubbleAt, Borders/BorderBubbles/Nodes,
+Add/AddBatch/Pop/Wake. Scripts use it via `dynamic` (example `gh/examples/NodeSprinkle.cs`, compile-checked).
+- Core: `FoamSolver.RequestAddBatch` (many seeds, ONE rebuild; `Rearranger.PrepareAdds`, `PlaceSeed(fn, index, ...)`, RebuildJob
+  AddRadii/AddAts/AddR0s; a batch seed that took no space is marked dead, not refused).
+- `core/Generators.cs` `BorderDetail.Choose`: borders by length (Where 0/1/2), point along, radius = U(SizeMin, SizeMax) x smallest
+  bubble on the border, spacing from picks and nodes; skips host contact lines. Plugin component `BorderDetailComponent` (Seed -1 =
+  random, shown in Info; Pace; Reset). Harness `gen <fixture> [seed] [batches] [where]`: pack15 + 4 batches → 17/17 seeds became
+  bubbles, volumes exact, identical on rerun with the same seed.
+- Recorder logs batches; `replaylive` replays them (and generator Add/Pop).
+- Next generator ideas from Alex: stream bed (bubbles float by and collect; needs direct insertion of free bubbles without a rebuild,
+  flow fields, removal downstream). Alex wants generative pen plots: random seeds fine, reproducibility nice-to-have.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally

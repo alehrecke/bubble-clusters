@@ -40,6 +40,7 @@
 //   Pressures : double list    per bubble, relative to outside (units: tension / length)
 //   Info      : string         diagnostics
 //   Caps      : Mesh list      the outer films (each bubble's surface facing the air)
+//   Foam      : object         live handle for generators (Border Detail, or your own scripts; see FoamHandle)
 //
 // GENERATED FILE: edit ../core/*.cs or gh/BubbleSolver.template.cs, then run
 // `python gh/build_gh.py`. Don't edit the merged gh/BubbleSolver.cs by hand.
@@ -81,12 +82,12 @@ public class Script_Instance : GH_ScriptInstance
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
                            Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh,
                            ref object Films, ref object Bubbles, ref object Borders, ref object Nodes,
-                           ref object Pressures, ref object Info, ref object Caps)
+                           ref object Pressures, ref object Info, ref object Caps, ref object Foam)
     {
         engine.Component = Component;
         engine.GrasshopperDocument = GrasshopperDocument;
         engine.Solve(Centers, Radii, CellSize, Pack, Reset, Run, Pull, Add, AddRadius, Pop, PopAt, AddAt, Gather, GatherTo,
-                     HostPlane, HostMesh, ref Films, ref Bubbles, ref Borders, ref Nodes, ref Pressures, ref Info, ref Caps);
+                     HostPlane, HostMesh, ref Films, ref Bubbles, ref Borders, ref Nodes, ref Pressures, ref Info, ref Caps, ref Foam);
     }
 
     public override BoundingBox ClippingBox { get { return engine.ClippingBox; } }

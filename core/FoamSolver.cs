@@ -520,7 +520,12 @@ public class FoamSolver
     int pendingReadyStep;
 
     // ---- adding bubbles ----
-    class AddRequest { public double Radius; public bool HasAt; public Vec3 At; }
+    class AddRequest
+    {
+        public double Radius; public bool HasAt; public Vec3 At;
+        public List<Vec3> Ats; public List<double> Radii;   // a batch: seeds at exactly these points (generators)
+        public string Label;
+    }
     readonly List<AddRequest> addQueue = new List<AddRequest>();
     AddRequest currentAdd;
     int addRetries; Random addRng;
@@ -541,6 +546,15 @@ public class FoamSolver
     }
 
     public int PendingAdds { get { return addQueue.Count; } }
+
+    // A batch of bubbles, seeded at exactly these points, inserted with ONE rebuild. For generators: e.g.
+    // Border Detail puts seeds on Plateau borders. Seeds should be spaced at least ~2 rebuild cells apart.
+    // Radii below the rebuild grid are raised to it (as for single adds).
+    public void RequestAddBatch(IList<Vec3> ats, IList<double> radii, string label = null)
+    {
+        if (ats == null || ats.Count == 0) return;
+        addQueue.Add(new AddRequest { Ats = new List<Vec3>(ats), Radii = new List<double>(radii), Label = label });
+    }
 
     // Where a requested AddAt point actually seeds (see RequestAdd).
     // A point inside bubble k seeds on k's own nearest border; if k has none (a free bubble), on k's
@@ -639,6 +653,7 @@ public class FoamSolver
     {
         currentAdd = addQueue[0];
         addQueue.RemoveAt(0);
+        if (currentAdd.Ats != null) { StartAddBatch(currentAdd); return; }
         string where;
         Vec3 at = currentAdd.HasAt ? PlaceAddPoint(currentAdd.At, out where) : PickAddPoint(out where);
         // The seed must be at least about one rebuild-grid cell across, or the grid misses it
@@ -656,6 +671,28 @@ public class FoamSolver
         double r0 = Math.Max(1.25 * grid, 1.5 * TargetEdge * Math.Max(0.25, Math.Min(1, S.EdgesPerRadius > 0 ? radius / (S.EdgesPerRadius * TargetEdge) : 1)));
         var job = Rearranger.PrepareAdd(this, at, r0, radius);
         job.What += " (" + where + ")" + note;
+        Dispatch(job);
+    }
+
+    void StartAddBatch(AddRequest req)
+    {
+        double grid = TargetEdge * S.RebuildGridFactor;
+        var r0s = new List<double>(); var radii = new List<double>();
+        int raised = 0;
+        for (int i = 0; i < req.Ats.Count; i++)
+        {
+            double radius = req.Radii[i];
+            if (radius < grid) { radius = grid; raised++; }
+            radii.Add(radius);
+            r0s.Add(Math.Max(1.25 * grid, 1.5 * TargetEdge * Math.Max(0.25, Math.Min(1, S.EdgesPerRadius > 0 ? radius / (S.EdgesPerRadius * TargetEdge) : 1))));
+        }
+        string what = "add " + req.Ats.Count + " bubbles (" + (req.Label ?? "batch") + ")" +
+                      (raised > 0 ? "; " + raised + " raised to the smallest this CellSize can hold" : "");
+        Dispatch(Rearranger.PrepareAdds(this, req.Ats, r0s, radii, what));
+    }
+
+    void Dispatch(Rearranger.RebuildJob job)
+    {
         if (S.AsyncRearrange)
         {
             pendingJob = job;
@@ -756,14 +793,14 @@ public class FoamSolver
         {
             LastFailedJob = job;
             string retry = "";
-            if (job.AddRadius > 0)
+            if (job.AddCount > 0)
             {
                 // A refused add tries another node (twice) instead of being dropped.
                 if (addRetries < 2 && currentAdd != null)
                 {
                     addRetries++;
                     addQueue.Insert(0, currentAdd);   // same request; a point request is re-jittered by PrepareAdd
-                    retry = currentAdd.HasAt ? "; trying again" : "; trying another node";
+                    retry = currentAdd.HasAt || currentAdd.Ats != null ? "; trying again" : "; trying another node";
                 }
                 else { addRetries = 0; retry = "; add dropped after 3 tries"; }
             }
@@ -771,21 +808,28 @@ public class FoamSolver
             RearrangeLog.Add("step " + job.Step + ": " + job.What + " -> rebuild refused: " + job.Fail + when + retry);
             return;
         }
-        if (job.AddRadius > 0) addRetries = 0;
+        if (job.AddCount > 0) addRetries = 0;
         int bordersBefore = BorderEdges.Count, nodesBefore = Nodes.Count;
-        if (job.AddRadius > 0)
+        int firstNew = job.CurrentVolume.Length;   // regions from here on are this job's new bubbles
+        if (job.AddCount > 0)
         {
-            // Grow the per-region arrays for the new bubble; its target starts at the seeded
+            // Grow the per-region arrays for the new bubbles; each target starts at its seeded
             // volume and ramps to the requested size.
-            int k = job.Mesh.BubbleCount;
-            double seeded = job.Mesh.Volumes()[k];
-            TargetVolume = Grow(TargetVolume, k, seeded);
-            DesiredVolume = Grow(DesiredVolume, k, 4.0 / 3.0 * Math.PI * job.AddRadius * job.AddRadius * job.AddRadius);
-            Pressure = Grow(Pressure, k, 0);
-            RegionScale = job.Scale ?? Grow(RegionScale, k, 1);
-            var pt = new Vec3[k + 1]; Array.Copy(PullTarget, pt, PullTarget.Length); PullTarget = pt;
-            var po = new bool[k + 1]; Array.Copy(PullOn, po, PullOn.Length); PullOn = po;
-            Added++;
+            var seededVol = job.Mesh.Volumes();
+            int kMax = job.Mesh.BubbleCount;
+            for (int i = 0; i < job.AddCount; i++)
+            {
+                int k = firstNew + i;
+                double rr = job.AddRadii[i];
+                TargetVolume = Grow(TargetVolume, k, seededVol[k]);
+                DesiredVolume = Grow(DesiredVolume, k, 4.0 / 3.0 * Math.PI * rr * rr * rr);
+                Pressure = Grow(Pressure, k, 0);
+                if (job.Scale == null) RegionScale = Grow(RegionScale, k, 1);
+            }
+            if (job.Scale != null) RegionScale = job.Scale;
+            var pt = new Vec3[kMax + 1]; Array.Copy(PullTarget, pt, PullTarget.Length); PullTarget = pt;
+            var po = new bool[kMax + 1]; Array.Copy(PullOn, po, PullOn.Length); PullOn = po;
+            Added += job.AddCount;
         }
         // A bubble the rebuild left a little off keeps its target: the volume correction puts the gap
         // back within a step or two, without a visible shrink-and-regrow. "A little" = its radius off by
@@ -800,7 +844,7 @@ public class FoamSolver
             // Fidelity of the rebuild itself: against the volumes when it was prepared (live resizes
             // in the meantime are the ramp's job, not a loss).
             if (k < job.CurrentVolume.Length && job.CurrentVolume[k] > 0) kept = Math.Min(kept, rebuilt[k] / job.CurrentVolume[k]);
-            if (!(TargetVolume[k] > 0) || (job.AddRadius > 0 && k == rebuilt.Length - 1)) { TargetVolume[k] = rebuilt[k]; continue; }
+            if (!(TargetVolume[k] > 0) || k >= firstNew) { TargetVolume[k] = rebuilt[k]; continue; }
             double dr = Math.Abs(Math.Pow(3 * Math.Max(rebuilt[k], 0) / (4 * Math.PI), 1.0 / 3) - Math.Pow(3 * TargetVolume[k] / (4 * Math.PI), 1.0 / 3));
             double edge = TargetEdge * (RegionScale != null && k < RegionScale.Length ? RegionScale[k] : 1);
             if (dr < 0.5 * edge) continue;
@@ -808,6 +852,7 @@ public class FoamSolver
             TargetVolume[k] = rebuilt[k];
         }
         ReplaceMesh(job.Mesh);
+        if (job.AddCount > 1) MarkDead();   // a batch seed that took no space is left out, not re-inflated forever
         failedRebuilds = 0;
         Rearrangements++;
         RearrangeLog.Add("step " + job.Step + ": " + job.What + " -> rebuilt in " + job.Ms + " ms" + when + "; nodes " +

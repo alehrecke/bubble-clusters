@@ -53,6 +53,7 @@ namespace BubbleClusters
             p.AddNumberParameter("Pressures", "Pressures", "Per bubble, relative to outside.", GH_ParamAccess.list);
             p.AddTextParameter("Info", "Info", "Diagnostics.", GH_ParamAccess.item);
             p.AddMeshParameter("Caps", "Caps", "The outer films (each bubble's surface facing the air).", GH_ParamAccess.list);
+            p.AddGenericParameter("Foam", "Foam", "Live handle to this simulation, for generators (Border Detail, or your own C# script via `dynamic`).", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -72,9 +73,9 @@ namespace BubbleClusters
             engine.Component = this;
             engine.AlwaysOutput = true;
             engine.GrasshopperDocument = OnPingDocument();
-            object films = null, bubbles = null, borders = null, nodes = null, pressures = null, info = null, caps = null;
+            object films = null, bubbles = null, borders = null, nodes = null, pressures = null, info = null, caps = null, foam = null;
             engine.Solve(centers, radii, cell, pack, reset, run, pull, add, addRadius, pop, popAt, addAt, gather, gatherTo,
-                         hostPlane, hostMesh, ref films, ref bubbles, ref borders, ref nodes, ref pressures, ref info, ref caps);
+                         hostPlane, hostMesh, ref films, ref bubbles, ref borders, ref nodes, ref pressures, ref info, ref caps, ref foam);
             if (films != null) DA.SetDataList(0, (IEnumerable)films);
             if (bubbles != null) DA.SetDataList(1, (IEnumerable)bubbles);
             if (borders != null) DA.SetDataList(2, (IEnumerable)borders);
@@ -82,6 +83,7 @@ namespace BubbleClusters
             if (pressures != null) DA.SetDataList(4, (IEnumerable)pressures);
             if (info != null) DA.SetData(5, info.ToString());
             if (caps != null) DA.SetDataList(6, (IEnumerable)caps);
+            if (foam != null) DA.SetData(7, new Grasshopper.Kernel.Types.GH_ObjectWrapper(foam));
         }
 
         public override BoundingBox ClippingBox { get { return engine.ClippingBox; } }

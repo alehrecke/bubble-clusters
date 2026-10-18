@@ -24,7 +24,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18d";
+    public const string Build = "2026-10-18e";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -80,6 +80,7 @@ public static class BubbleState
 
 public class BubbleRun
 {
+    public FoamHandle Handle;        // the live handle given out through the Foam output (one per run)
     public string Signature;
     public FoamSolver Solver;
     public RunRecorder Recorder;
@@ -219,7 +220,7 @@ public class BubbleEngine
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
                            Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh,
                            ref object Films, ref object Bubbles, ref object Borders, ref object Nodes,
-                           ref object Pressures, ref object Info, ref object Caps)
+                           ref object Pressures, ref object Info, ref object Caps, ref object Foam)
     {
         if (Centers == null || Radii == null || Centers.Count == 0 || Centers.Count != Radii.Count)
         { Info = "Need Centers and Radii lists of the same length."; return; }
@@ -325,6 +326,8 @@ public class BubbleEngine
         if (Wired("Borders")) Borders = run.View.Borders.Select(pl => new PolylineCurve(pl)).ToList();
         if (Wired("Nodes")) Nodes = run.View.Nodes;
         Pressures = Enumerable.Range(1, m.BubbleCount).Select(k => s.Pressure[k]).ToList();
+        if (run.Handle == null) run.Handle = new FoamHandle(run, this);
+        Foam = run.Handle;
 
         bool active = Run && !run.Settled;
         if (!active || run.LastReport == null || run.Ticks - run.LastReportTick >= Settings.FullReportEvery)
@@ -658,6 +661,101 @@ public class BubbleEngine
         i = mesh.Vertices.Add(m.V[v].X, m.V[v].Y, m.V[v].Z);
         map[v] = i;
         return i;
+    }
+}
+
+// The live foam, handed downstream through the solver's Foam output. Generators (the Border Detail
+// component, or your own C# script component) read the current state and ask for changes; the solver
+// applies them on its next ticks. Nothing here is a copy: it always reflects the running simulation.
+//
+// From a GH C# script, use it through `dynamic` (no assembly reference needed):
+//     dynamic foam = Foam;                       // input wired from the solver's Foam output
+//     if (!foam.Busy) foam.Add(pt, 0.3);         // one bubble (same rules as the AddAt input)
+//     foam.AddBatch(points, radii, "my gen");     // many, one rebuild
+// Members:
+//   state     Step, Settled, Busy (a rebuild / add / pop is pending), CellSize, MinRadius, Seed
+//   bubbles   BubbleIds, Centroid(k), Radius(k) (target), Pressure(k), BubbleAt(point) (0 = none)
+//   geometry  Borders (polylines), BorderBubbles (bubble ids meeting at each border; 0 = outside air), Nodes
+//   actions   Add(point, r), AddBatch(points, radii, label), Pop(point), Wake()
+public class FoamHandle
+{
+    readonly BubbleRun run;
+    readonly BubbleEngine engine;
+    public FoamHandle(BubbleRun run, BubbleEngine engine) { this.run = run; this.engine = engine; }
+
+    public FoamSolver Solver { get { return run.Solver; } }   // for the built-in generators (core API)
+    public bool IsValid { get { return run != null && run.Solver != null; } }
+    public int Step { get { return run.Solver.Steps; } }
+    public bool Settled { get { return run.Settled; } }
+    public bool Busy { get { var s = run.Solver; return s.RebuildPending || s.PendingAdds > 0 || s.PendingPops > 0; } }
+    public double CellSize { get { return run.Solver.TargetEdge; } }
+    public double MinRadius { get { return run.Solver.TargetEdge * run.Solver.S.RebuildGridFactor; } }
+
+    public List<int> BubbleIds
+    {
+        get
+        {
+            var s = run.Solver; var vol = s.Mesh.Volumes();
+            return Enumerable.Range(1, s.Mesh.BubbleCount).Where(k => !s.IsDead(k) && vol[k] > 0).ToList();
+        }
+    }
+    public Point3d Centroid(int k) { var c = run.Solver.Centroids()[k]; return new Point3d(c.X, c.Y, c.Z); }
+    public double Radius(int k) { return run.Solver.DesiredRadius(k); }
+    public double Pressure(int k) { return run.Solver.Pressure[k]; }
+    public int BubbleAt(Point3d p) { return global::Pop.InsideBubble(run.Solver.Mesh, new Vec3(p.X, p.Y, p.Z)); }
+
+    public List<Polyline> Borders { get { run.View.Update(run.Solver); return run.View.Borders.Select(pl => new Polyline(pl)).ToList(); } }
+    public List<Point3d> Nodes { get { run.View.Update(run.Solver); return new List<Point3d>(run.View.Nodes); } }
+    public List<int[]> BorderBubbles
+    {
+        get
+        {
+            var m = run.Solver.Mesh; var et = m.EdgeTris();
+            run.View.Update(run.Solver);
+            var res = new List<int[]>();
+            foreach (var c in run.View.Chains)
+            {
+                var regs = new SortedSet<int>();
+                List<int> tris;
+                if (c.Verts.Count >= 2 && et.TryGetValue(FoamMesh.EdgeKey(c.Verts[0], c.Verts[1]), out tris))
+                    foreach (int ti in tris) { regs.Add(m.T[ti].Neg); regs.Add(m.T[ti].Pos); }
+                res.Add(regs.ToArray());
+            }
+            return res;
+        }
+    }
+
+    public void Add(Point3d at, double r)
+    {
+        run.Solver.RequestAdd(r, 1, true, new Vec3(at.X, at.Y, at.Z));
+        run.Event("add requested by a generator (r " + r.ToString("G3", CultureInfo.InvariantCulture) + ") at " +
+                  at.X.ToString("R", CultureInfo.InvariantCulture) + " " + at.Y.ToString("R", CultureInfo.InvariantCulture) + " " + at.Z.ToString("R", CultureInfo.InvariantCulture));
+        Wake();
+    }
+
+    public void AddBatch(IList<Point3d> at, IList<double> r, string label)
+    {
+        if (at == null || r == null || at.Count == 0) return;
+        run.Solver.RequestAddBatch(at.Select(p => new Vec3(p.X, p.Y, p.Z)).ToList(), r.ToList(), label);
+        run.Event("batch of " + at.Count + " requested by " + (label ?? "a generator") + ": " +
+                  string.Join("; ", Enumerable.Range(0, at.Count).Select(i => string.Format(CultureInfo.InvariantCulture, "{0:R} {1:R} {2:R} r {3:R}", at[i].X, at[i].Y, at[i].Z, r[i]))));
+        Wake();
+    }
+
+    public void Pop(Point3d at)
+    {
+        run.Solver.RequestPop(0, new Vec3(at.X, at.Y, at.Z));
+        run.Event("pop requested by a generator at " + at.X.ToString("R", CultureInfo.InvariantCulture) + " " +
+                  at.Y.ToString("R", CultureInfo.InvariantCulture) + " " + at.Z.ToString("R", CultureInfo.InvariantCulture));
+        Wake();
+    }
+
+    // Make the solver run again (it stops scheduling itself once settled).
+    public void Wake()
+    {
+        run.Unsettle();
+        var doc = engine.GrasshopperDocument; var comp = engine.Component;
+        if (doc != null && comp != null) doc.ScheduleSolution(Settings.ScheduleDelayMs, d => comp.ExpireSolution(false));
     }
 }
 

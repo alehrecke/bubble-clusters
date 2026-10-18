@@ -359,6 +359,35 @@ public static class Program
         if (cmd == "big") { BigTests(args.Length > 1 ? args[1] : "all"); return 0; }
         if (cmd == "rebuilddebug") { RebuildDebug(args[1], int.Parse(args[2]), int.Parse(args[3])); return 0; }
         if (cmd == "failrepro") { FailRepro(args[1], int.Parse(args[2]), args.Length > 3 ? args[3] : "any"); return 0; }
+        if (cmd == "gen")
+        {
+            // Border Detail generator: batches on a fixture, synchronous (deterministic), then relax.
+            //   gen <fixture> [seed] [batches] [where]
+            string fx = args.Length > 1 ? args[1] : "fixtures/pack15_gh";
+            int seed = args.Length > 2 ? int.Parse(args[2]) : 1, batches = args.Length > 3 ? int.Parse(args[3]) : 4;
+            List<double> r;
+            var s = LoadFixture(fx, out r, new SolverSettings());
+            Run(s, 400, "settle, " + s.Mesh.BubbleCount + " bubbles");
+            var set = new BorderDetailSettings { PerBatch = 6, Where = args.Length > 4 ? int.Parse(args[4]) : 0 };
+            var rng = new Random(seed);
+            int asked = 0;
+            for (int b = 0; b < batches; b++)
+            {
+                var picks = BorderDetail.Choose(s, set, rng);
+                asked += picks.Count;
+                Console.WriteLine(string.Format(CI, "  batch {0}: {1} seeds, radii {2}", b, picks.Count, string.Join(" ", picks.Select(p => p.Radius.ToString("F2", CI)))));
+                s.RequestAddBatch(picks.Select(p => p.At).ToList(), picks.Select(p => p.Radius).ToList(), "border detail");
+                Run(s, 300, "after batch " + b + ", bubbles " + s.Mesh.BubbleCount + " (" + s.DeadBubbles.Count + " dead)");
+            }
+            Run(s, 600, "relax");
+            Run(s, 600, "relax");
+            var vol = s.Mesh.Volumes();
+            int alive = Enumerable.Range(1, s.Mesh.BubbleCount).Count(k => !s.IsDead(k));
+            double worst = Enumerable.Range(1, s.Mesh.BubbleCount).Where(k => !s.IsDead(k)).Max(k => Math.Abs(vol[k] / s.DesiredVolume[k] - 1));
+            Console.WriteLine(string.Format(CI, "seed {0}: asked {1}, bubbles alive {2} (started {3}), worst volume error {4:P2}, area {5:F4}, tris {6}",
+                seed, asked, alive, r.Count, worst, s.Area, s.Mesh.T.Count));
+            return 0;
+        }
         if (cmd == "budget")
         {
             // Triangle budget of a recorded run's cluster with the current meshing, and what an add would cost.
@@ -608,6 +637,7 @@ public static class Program
         var gathers = new SortedDictionary<int, double>();
         var radii = new SortedDictionary<int, List<double>>();
         var pops = new SortedDictionary<int, List<Vec3>>();
+        var batches = new SortedDictionary<int, List<Tuple<string, List<Vec3>, List<double>>>>();
         var pulls = new SortedDictionary<int, KeyValuePair<double, Dictionary<int, Vec3>>>();
         var stepRx = new System.Text.RegularExpressions.Regex(@"^step (\d+): (.*)$");
         foreach (var line in File.ReadLines(Path.Combine(dir, "log.jsonl")))
@@ -633,7 +663,30 @@ public static class Program
                 {
                     gathers[st] = double.Parse(what.Substring(10), CI);
                 }
-                var pm2 = System.Text.RegularExpressions.Regex.Match(what, @"^pop requested at (\S+) (\S+) (\S+)");
+                // Generator batches: "batch of N requested by LABEL: x y z r R; x y z r R; ..."
+                var bm = System.Text.RegularExpressions.Regex.Match(what, @"^batch of \d+ requested by ([^:]*): (.*)$");
+                if (bm.Success)
+                {
+                    var pts = new List<Vec3>(); var rs = new List<double>();
+                    foreach (var part in bm.Groups[2].Value.Split(';'))
+                    {
+                        var f = part.Trim().Split(' ');
+                        if (f.Length < 5) continue;
+                        pts.Add(new Vec3(double.Parse(f[0], CI), double.Parse(f[1], CI), double.Parse(f[2], CI)));
+                        rs.Add(double.Parse(f[4], CI));
+                    }
+                    if (!batches.ContainsKey(st)) batches[st] = new List<Tuple<string, List<Vec3>, List<double>>>();
+                    batches[st].Add(Tuple.Create(bm.Groups[1].Value, pts, rs));
+                }
+                // An add requested by a generator script (Foam.Add) replays like an AddAt add.
+                var gm = System.Text.RegularExpressions.Regex.Match(what, @"^add requested by a generator \(r ([0-9.eE+-]+)\) at (\S+) (\S+) (\S+)");
+                if (gm.Success)
+                {
+                    if (!adds.ContainsKey(st)) { adds[st] = new List<double>(); addAts[st] = new List<Vec3>(); }
+                    adds[st].Add(double.Parse(gm.Groups[1].Value, CI));
+                    addAts[st].Add(new Vec3(double.Parse(gm.Groups[2].Value, CI), double.Parse(gm.Groups[3].Value, CI), double.Parse(gm.Groups[4].Value, CI)));
+                }
+                var pm2 = System.Text.RegularExpressions.Regex.Match(what, @"^pop requested(?: by a generator)? at (\S+) (\S+) (\S+)");
                 if (pm2.Success)
                 {
                     if (!pops.ContainsKey(st)) pops[st] = new List<Vec3>();
@@ -675,6 +728,8 @@ public static class Program
             }
             List<double> rr; if (radii.TryGetValue(st, out rr)) s.SetDesiredRadii(rr);
             List<Vec3> pp; if (pops.TryGetValue(st, out pp)) foreach (var p in pp) s.RequestPop(0, p);
+            List<Tuple<string, List<Vec3>, List<double>>> bb;
+            if (batches.TryGetValue(st, out bb)) foreach (var bt in bb) s.RequestAddBatch(bt.Item2, bt.Item3, bt.Item1);
             KeyValuePair<double, Dictionary<int, Vec3>> pv;
             if (pulls.TryGetValue(st, out pv))
             {

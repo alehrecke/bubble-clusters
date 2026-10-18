@@ -108,6 +108,18 @@ points to, or the side a mesh's normals point to, is air. The other side is a we
 - Changing the host rebuilds. Plane runs are recorded and can be replayed. Mesh hosts aren't recorded yet.
 - Not handled yet: a dome being pulled off the surface (it stays attached), or moving the host live.
 
+## 3d. Generators (Foam output)
+The solver's last output, `Foam`, is a live handle to the running simulation. Generators sit downstream of it, read the
+current foam and ask the solver for changes. Your own Add / AddAt / Pop inputs keep working alongside them.
+- **Border Detail** (Pneuhaus → Bubbles): sprinkles small bubbles along Plateau borders, a batch at a time (one rebuild per
+  batch), until `Total`. `SizeMin`/`SizeMax` = new radius as a fraction of the smallest bubble on that border; `Where` 0 any
+  border, 1 outer only (the visible ones), 2 inner only; `Spacing` keeps seeds apart; `Pace` = solver steps to wait after a
+  batch (0 = until settled). `Seed` -1 = random: Info shows the seed used, so type it into `Seed` to repeat a result you liked
+  (the generator's choices repeat; the background rebuild timing in Rhino can still make two runs differ slightly).
+- **Your own generator:** a C# Script component with the `Foam` handle as input. Start from `gh/examples/NodeSprinkle.cs`:
+  it uses the handle through `dynamic` (no plugin reference needed). Members are listed at the top of that file and on
+  `FoamHandle` in `gh/BubbleEngine.cs`. Batches (`foam.AddBatch`) go in with one rebuild; keep seeds a couple of CellSizes apart.
+
 ## 4. Preview
 The component draws its own preview:
 - **Outer caps:** see-through pale blue.
