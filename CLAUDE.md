@@ -333,3 +333,16 @@ Next (older note): Alex re-runs SETUP.md's double-bubble test in GH, then Phase 
 Related/possibly-redundant files: `tools/mathematical-components/` has `BubbleFoam.cs`, `BubbleIntersection2.cs`, `BubblePlateau3.cs` — earlier or alternate versions of this same bubble-geometry work, not yet reconciled with `src/` here.
 
 This tool has not yet been ported into the Membrane plugin repo — it's a standalone art piece (jewelry), not currently part of the inflatable-patterning pipeline.
+
+**2026-10-18: big bubbles + Films output.**
+- Big bubbles are meshed coarser: `MobiusMesher.ScaleFor` = fine for small bubbles (6 edges per radius, down to 0.25 x CellSize),
+  CellSize for ordinary ones, and r / (15 x CellSize) beyond r > 15 x CellSize, capped at 2x. `Remesher.SizeField` grades the
+  size per vertex (Grading 0.3 per L; the outside air / host don't constrain), used by the remesher and `NeedsRemesh` (cached per
+  topology version). GH triangle guards estimate each bubble at its own size (`BubbleEngine.EstTris`).
+  Tested (`harness big double`, r 3 + r 0.6 at CellSize 0.1): 4x cap → 2,555 tris but border scatter 6.7 deg (cause not found:
+  not big triangles at the border, not smoothing, not convergence); 2x cap → 3.6 deg, pressures within 0.2%. Coarsening from 6 x h
+  degraded the benchmarks, hence the 15 x h threshold (benchmarks unchanged). `big add`: Alex's cluster (fixture `big_gh`) + an
+  r 7.07 bubble → joins, 32k tris, 120.00 deg.
+- Films output was empty when wired after the run had settled (outputs were filled only if wired at solve time). The plugin now
+  always fills outputs (`BubbleEngine.AlwaysOutput`; its preview override replaces GH's default preview). Films = walls between
+  bubbles only (one mesh per pair); new output **Caps** (last) = outer films; Bubbles = closed volumes.

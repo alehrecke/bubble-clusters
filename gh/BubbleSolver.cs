@@ -33,12 +33,13 @@
 //   GatherTo  : Point3d       optional; not connected → the centre of the cluster
 //
 // OUTPUTS
-//   Films     : Mesh list      one mesh per film (inner walls + outer caps)
+//   Films     : Mesh list      the walls between bubbles, one mesh per pair of touching bubbles
 //   Bubbles   : Mesh list      one closed mesh per bubble, normals outward
 //   Borders   : Curve list     Plateau borders (polylines)
 //   Nodes     : Point3d list   points where four borders meet
 //   Pressures : double list    per bubble, relative to outside (units: tension / length)
 //   Info      : string         diagnostics
+//   Caps      : Mesh list      the outer films (each bubble's surface facing the air)
 //
 // GENERATED FILE: edit ../core/*.cs or gh/BubbleSolver.template.cs, then run
 // `python gh/build_gh.py`. Don't edit the merged gh/BubbleSolver.cs by hand.
@@ -80,12 +81,12 @@ public class Script_Instance : GH_ScriptInstance
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
                            Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh,
                            ref object Films, ref object Bubbles, ref object Borders, ref object Nodes,
-                           ref object Pressures, ref object Info)
+                           ref object Pressures, ref object Info, ref object Caps)
     {
         engine.Component = Component;
         engine.GrasshopperDocument = GrasshopperDocument;
         engine.Solve(Centers, Radii, CellSize, Pack, Reset, Run, Pull, Add, AddRadius, Pop, PopAt, AddAt, Gather, GatherTo,
-                     HostPlane, HostMesh, ref Films, ref Bubbles, ref Borders, ref Nodes, ref Pressures, ref Info);
+                     HostPlane, HostMesh, ref Films, ref Bubbles, ref Borders, ref Nodes, ref Pressures, ref Info, ref Caps);
     }
 
     public override BoundingBox ClippingBox { get { return engine.ClippingBox; } }
@@ -284,12 +285,16 @@ public class BubbleEngine
 {
     public IGH_Component Component;
     public GH_Document GrasshopperDocument;
+    // Fill every output on every solve. The plugin sets this: its preview override replaces Grasshopper's
+    // default preview, so filled outputs don't draw twice. The paste-in script can't stop the default
+    // preview, so it fills outputs only when wired (wire them before the run settles, or press Reset).
+    public bool AlwaysOutput;
 
     public void Solve(List<Point3d> Centers, List<double> Radii, double CellSize, bool Pack, bool Reset, bool Run,
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
                            Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh,
                            ref object Films, ref object Bubbles, ref object Borders, ref object Nodes,
-                           ref object Pressures, ref object Info)
+                           ref object Pressures, ref object Info, ref object Caps)
     {
         if (Centers == null || Radii == null || Centers.Count == 0 || Centers.Count != Radii.Count)
         { Info = "Need Centers and Radii lists of the same length."; return; }
@@ -316,12 +321,12 @@ public class BubbleEngine
         if (Reset || run == null || run.Signature != sig)
         {
             double h = CellSize > 0 ? CellSize : Radii.Min() / 6.0;
-            // Refuse builds that would lock Rhino up. Upper bound: every sphere fully exposed.
-            double sphereArea = Radii.Sum(r => 4 * Math.PI * r * r);
-            double estTris = sphereArea / (0.433 * h * h);
+            // Refuse builds that would lock Rhino up. Upper bound: every sphere fully exposed, each at its own edge size.
+            double estTris = Radii.Sum(r => EstTris(r, h));
             if (estTris > Settings.MaxTriangles)
             {
-                double hOk = Math.Sqrt(sphereArea / (0.433 * Settings.MaxTriangles));
+                double hOk = h;
+                while (Radii.Sum(r => EstTris(r, hOk)) > Settings.MaxTriangles) hOk *= 1.1;
                 Info = string.Format(CultureInfo.InvariantCulture,
                     "Not built: about {0:N0} triangles at CellSize {1:G3} (limit {2:N0}).\n" +
                     "Radii range {3:G3} to {4:G3}. Check for a typo, or use CellSize >= {5:G3}.",
@@ -385,9 +390,11 @@ public class BubbleEngine
         run.View.Update(s);
         current = run;
 
-        // Outputs only when wired: the component draws its own preview (see DrawViewport*),
-        // and filling unwired outputs would make Grasshopper draw the default preview on top.
-        if (Wired("Films")) Films = run.View.Films.Select(x => x.DuplicateMesh()).ToList();
+        // Films = the walls between bubbles (one mesh per pair); Caps = the outer films; Bubbles = closed volumes.
+        // In the script, outputs are filled only when wired (see AlwaysOutput). In 2026-10-16 runs a Films wire
+        // added after the run had settled stayed empty, because nothing re-solved the component.
+        if (Wired("Films")) Films = Enumerable.Range(0, run.View.Films.Count).Where(i => run.View.FilmIsWall[i]).Select(i => run.View.Films[i].DuplicateMesh()).ToList();
+        if (Wired("Caps")) Caps = Enumerable.Range(0, run.View.Films.Count).Where(i => !run.View.FilmIsWall[i] && !run.View.FilmIsFoot[i]).Select(i => run.View.Films[i].DuplicateMesh()).ToList();
         if (Wired("Bubbles")) Bubbles = BubbleMeshes(m);
         if (Wired("Borders")) Borders = run.View.Borders.Select(pl => new PolylineCurve(pl)).ToList();
         if (Wired("Nodes")) Nodes = run.View.Nodes;
@@ -486,11 +493,12 @@ public class BubbleEngine
             // Same guard as the initial build: AddRadius 10 into a cluster of r ~1 bubbles took the mesh from
             // 32k to 72k triangles, with 3.7 s ticks and 25 s rebuilds (Alex's runs 2026-10-15_233324, 2026-10-16_000150).
             double h = s.TargetEdge;
-            double estAdd = 4 * Math.PI * r * r / (0.433 * h * h);
+            double estAdd = EstTris(r, h);
             int room = Settings.MaxTriangles - s.Mesh.T.Count;
             if (estAdd > room)
             {
-                double rMax = room > 0 ? Math.Sqrt(room * 0.433 * h * h / (4 * Math.PI)) : 0;
+                double rMax = 0;
+                for (double rr = h; rr < 1e4 && EstTris(rr, h) <= room; rr *= 1.05) rMax = rr;
                 run.Event("add refused: r " + r.ToString("G3", CultureInfo.InvariantCulture) + " would add about " + estAdd.ToString("N0", CultureInfo.InvariantCulture) +
                           " triangles (limit " + Settings.MaxTriangles.ToString("N0", CultureInfo.InvariantCulture) + ", " + s.Mesh.T.Count.ToString("N0", CultureInfo.InvariantCulture) +
                           " now). Largest that fits: r " + rMax.ToString("G2", CultureInfo.InvariantCulture) + ", or raise CellSize.");
@@ -596,6 +604,14 @@ public class BubbleEngine
     // Look outputs up by name: Rhino 8 script components can have an extra output (e.g. "out")
     // ahead of ours, so positions shift. Using position 1 for Bubbles returned null.
     // An output we can't find is treated as wired, so it always gets data.
+    // Upper bound on a bubble's triangles (fully exposed sphere) at its own edge size (see MobiusMesher.ScaleFor):
+    // about 1,000 for any bubble between 1.5 and 24 x CellSize in radius, more beyond that.
+    static double EstTris(double r, double h)
+    {
+        double e = h * MobiusMesher.ScaleFor(r, h, new SolverSettings().EdgesPerRadius);
+        return 4 * Math.PI * r * r / (0.433 * e * e);
+    }
+
     bool InputWired(string name)
     {
         foreach (var p in Component.Params.Input)
@@ -605,6 +621,7 @@ public class BubbleEngine
 
     bool Wired(string name)
     {
+        if (AlwaysOutput) return true;
         foreach (var p in Component.Params.Output)
             if (p.NickName == name || p.Name == name) return p.Recipients.Count > 0;
         return true;
@@ -1147,14 +1164,30 @@ public static class MobiusMesher
         return Build(BubbleFunctions.FromSpheres(centers, radii, host), lo, hi, h, out info, SizeScale(radii, h, 6));
     }
 
-    // Per-region edge-size scale: about `edgesPerRadius` edges across each bubble's radius,
-    // never finer than 1/4 of the base edge h. Index 0 (outside) = 1.
+    // Per-region edge-size scale (index 0 = outside = 1):
+    //   small bubbles: about `edgesPerRadius` edges across the radius, down to MinScale x h
+    //   ordinary bubbles: the base edge h (CellSize means what it says)
+    //   big bubbles (r > CoarsenEdgesPerRadius x h): coarser, r / (CoarsenEdgesPerRadius x h), up to MaxCoarsen x h
+    // Big bubbles used to be capped at h, so their triangle count grew with r^2: an r 7 add at CellSize
+    // 0.2 needed ~40k triangles and was refused (Alex's run 2026-10-16_011841). Coarsening is capped at 2x:
+    // at 4x the border angles next to small bubbles scattered 6.7 deg (vs 2.9 uncoarsened, 3.6 at 2x;
+    // harness `big double`). It starts only at 15 x h: starting at 6 x h coarsened ordinary bubbles too
+    // and degraded the benchmarks (quad-bubble node scatter 4.4 -> 7.3 deg).
+    public const double MinScale = 0.25, MaxCoarsen = 2, CoarsenEdgesPerRadius = 15;
+
+    public static double ScaleFor(double r, double h, double edgesPerRadius)
+    {
+        if (!(edgesPerRadius > 0)) return 1;
+        double fine = r / (edgesPerRadius * h);
+        if (fine < 1) return Math.Max(MinScale, fine);
+        return Math.Max(1, Math.Min(MaxCoarsen, r / (CoarsenEdgesPerRadius * h)));
+    }
+
     public static double[] SizeScale(IList<double> radii, double h, double edgesPerRadius)
     {
         var sc = new double[radii.Count + 1];
         sc[0] = 1;
-        for (int i = 0; i < radii.Count; i++)
-            sc[i + 1] = edgesPerRadius > 0 ? Math.Max(0.25, Math.Min(1, radii[i] / (edgesPerRadius * h))) : 1;
+        for (int i = 0; i < radii.Count; i++) sc[i + 1] = ScaleFor(radii[i], h, edgesPerRadius);
         return sc;
     }
 
@@ -1465,11 +1498,13 @@ public static class Remesher
         public readonly FoamMesh M;
         public readonly List<List<int>> VT;
         public readonly List<bool> Dead;
+        public readonly List<double> Size;   // per vertex edge-size scale (graded field, see SizeField)
         readonly List<int> scratch = new List<int>(8);
 
-        public Topo(FoamMesh m)
+        public Topo(FoamMesh m, double[] regionScale = null, double L = 1)
         {
             M = m;
+            Size = new List<double>(SizeField(m, regionScale, L));
             VT = new List<List<int>>(m.V.Count + 64);
             for (int v = 0; v < m.V.Count; v++) VT.Add(new List<int>(7));
             Dead = new List<bool>(m.T.Count + 64);
@@ -1481,7 +1516,9 @@ public static class Remesher
             }
         }
 
-        public int AddVertex(Vec3 p) { M.V.Add(p); VT.Add(new List<int>(7)); return M.V.Count - 1; }
+        public int AddVertex(Vec3 p, double size) { M.V.Add(p); VT.Add(new List<int>(7)); Size.Add(size); return M.V.Count - 1; }
+
+        public double EdgeSize(int a, int b) { return Math.Min(Size[a], Size[b]); }
 
         public int AddTri(FoamTri t)
         {
@@ -1614,15 +1651,50 @@ public static class Remesher
     // Optional per-region size scale in (0, 1] (index = region, [0] = outside = 1): edges touching
     // region k aim for L * scale[k], so small bubbles get proportionally finer triangles.
     // Passed as a parameter (not a static) because rebuilds run on a background thread.
-    static double EdgeScale(FoamMesh m, List<int> tris, double[] sc)
+    // How fast the target edge size may grow with distance: scale + Grading x (distance / L).
+    public const double Grading = 0.3;
+
+    // Per-vertex edge-size scale. A vertex starts at the smallest scale of the bubbles around it (a
+    // wall between a big and a small bubble is meshed for the small one; the outside air and a host
+    // solid don't constrain, so a big bubble's outer film may be coarser than the base edge). Then the
+    // field is limited to grow by at most Grading x (distance / L) between neighbours, so sizes change
+    // gradually. Without grading, a coarse big-bubble film met a fine border in one row of triangles:
+    // noisy angles and a remesh every 10 steps (double bubble r 3 + r 0.6 at CellSize 0.1).
+    public static double[] SizeField(FoamMesh m, double[] sc, double L)
     {
-        if (sc == null) return 1;
-        double s = 1;
-        foreach (int ti in tris)
+        int nv = m.V.Count;
+        var s = new double[nv];
+        if (sc == null) { for (int v = 0; v < nv; v++) s[v] = 1; return s; }
+        for (int v = 0; v < nv; v++) s[v] = double.MaxValue;
+        foreach (var t in m.T)
         {
-            var t = m.T[ti];
-            if (t.Neg >= 0 && t.Neg < sc.Length && sc[t.Neg] < s) s = sc[t.Neg];
-            if (t.Pos >= 0 && t.Pos < sc.Length && sc[t.Pos] < s) s = sc[t.Pos];
+            double ts = double.MaxValue;
+            if (t.Neg > 0 && t.Neg < sc.Length) ts = Math.Min(ts, sc[t.Neg]);
+            if (t.Pos > 0 && t.Pos < sc.Length) ts = Math.Min(ts, sc[t.Pos]);
+            if (ts == double.MaxValue) continue;
+            if (ts < s[t.A]) s[t.A] = ts;
+            if (ts < s[t.B]) s[t.B] = ts;
+            if (ts < s[t.C]) s[t.C] = ts;
+        }
+        for (int v = 0; v < nv; v++) if (s[v] == double.MaxValue) s[v] = 1;
+        // Edges once, then relaxation sweeps (sizes only ever go down, so this terminates).
+        var keys = new long[3 * m.T.Count];
+        int n = 0;
+        foreach (var t in m.T) { keys[n++] = FoamMesh.EdgeKey(t.A, t.B); keys[n++] = FoamMesh.EdgeKey(t.B, t.C); keys[n++] = FoamMesh.EdgeKey(t.C, t.A); }
+        Array.Sort(keys, 0, n);
+        double g = Grading / Math.Max(L, 1e-12);
+        for (int sweep = 0; sweep < 60; sweep++)
+        {
+            bool changed = false;
+            for (int i = 0; i < n; i++)
+            {
+                if (i > 0 && keys[i] == keys[i - 1]) continue;
+                int a = (int)(keys[i] >> 32), b = (int)(keys[i] & 0xffffffff);
+                double d = g * (m.V[a] - m.V[b]).Length;
+                if (s[a] > s[b] + d) { s[a] = s[b] + d; changed = true; }
+                else if (s[b] > s[a] + d) { s[b] = s[a] + d; changed = true; }
+            }
+            if (!changed) break;
         }
         return s;
     }
@@ -1648,7 +1720,7 @@ public static class Remesher
 
     public static int SplitLong(FoamMesh m, double maxLen, bool chords = false, double[] scale = null, int maxPasses = 6)
     {
-        var tp = new Topo(m);
+        var tp = new Topo(m, scale, maxLen < double.MaxValue ? maxLen * 0.75 : 1);
         var tris = new List<int>(4);
         int total = 0;
         List<bool> onBorder = chords ? new List<bool>(tp.BorderVertices(tp.Edges())) : null;
@@ -1664,7 +1736,7 @@ public static class Remesher
                 double len = (m.V[a] - m.V[b]).Length;
                 tp.EdgeTris(a, b, tris);
                 bool chord = chords && tris.Count == 2 && onBorder[a] && onBorder[b] && !m.IsBorder(tris);
-                if (len > maxLen * EdgeScale(m, tris, scale) || chord) cand.Add(new KeyValuePair<long, double>(e, len));
+                if (len > maxLen * tp.EdgeSize(a, b) || chord) cand.Add(new KeyValuePair<long, double>(e, len));
             }
             if (cand.Count == 0) break;
             cand.Sort((p, q) => q.Value.CompareTo(p.Value));
@@ -1675,7 +1747,7 @@ public static class Remesher
                 tp.EdgeTris(a, b, tris);
                 if (tris.Count == 0) continue;            // already split this pass
                 bool border = m.IsBorder(tris);
-                int mid = tp.AddVertex((m.V[a] + m.V[b]) * 0.5);
+                int mid = tp.AddVertex((m.V[a] + m.V[b]) * 0.5, tp.EdgeSize(a, b));
                 if (chords) onBorder.Add(border);         // a border's midpoint is on the border; a film edge's isn't
                 foreach (int ti in tris.ToArray())
                 {
@@ -1714,7 +1786,7 @@ public static class Remesher
 
     public static int CollapseShort(FoamMesh m, double minLen, double maxLen, double[] scale = null, int maxPasses = 6)
     {
-        var tp = new Topo(m);
+        var tp = new Topo(m, scale, maxLen * 0.75);
         var etris = new List<int>(4);
         var regU = new List<int>(5); var regV = new List<int>(5);
         var ringU = new List<int>(8); var ringV = new List<int>(8); var ringD = new List<int>(8); var ringK = new List<int>(8);
@@ -1731,7 +1803,7 @@ public static class Remesher
             {
                 int a = (int)(e >> 32), b = (int)(e & 0xffffffff);
                 double len = (m.V[a] - m.V[b]).Length;
-                if (len < minLen * EdgeScale(m, tp.EdgeTris(a, b, etris), scale)) cand.Add(new KeyValuePair<long, double>(e, len));
+                if (len < minLen * tp.EdgeSize(a, b)) cand.Add(new KeyValuePair<long, double>(e, len));
             }
             if (cand.Count == 0) break;
             cand.Sort((p, q) => p.Value.CompareTo(q.Value));
@@ -1742,7 +1814,7 @@ public static class Remesher
                 tp.EdgeTris(u, v, etris);
                 if (etris.Count == 0) continue;                          // gone (a neighbour collapsed)
                 double len = (m.V[u] - m.V[v]).Length;
-                if (len >= minLen * EdgeScale(m, etris, scale)) continue; // no longer short
+                if (len >= minLen * tp.EdgeSize(u, v)) continue; // no longer short
                 bool borderEdge = m.IsBorder(etris);
                 tp.Regions(u, regU); tp.Regions(v, regV);
                 int bu = tp.BorderCount(u), bv = tp.BorderCount(v);
@@ -1783,7 +1855,7 @@ public static class Remesher
                     }
                 if (makesChord) continue;
                 bool tooLong = false;
-                double maxHere = maxLen * EdgeScale(m, etris, scale);
+                double maxHere = maxLen * tp.EdgeSize(u, v);
                 foreach (int w in rDrop) if ((m.V[w] - target).Length > maxHere) { tooLong = true; break; }
                 foreach (int w in rKeep) if (!tooLong && (m.V[w] - target).Length > maxHere) tooLong = true;
                 if (tooLong) continue;
@@ -1803,6 +1875,7 @@ public static class Remesher
                 }
                 tp.VT[drop].Clear();
                 m.V[keep] = target;
+                tp.Size[keep] = Math.Min(tp.Size[keep], tp.Size[drop]);
                 dirty.Add(keep);
                 foreach (int w in rKeep) dirty.Add(w);
                 foreach (int w in rDrop) dirty.Add(w);
@@ -2040,7 +2113,7 @@ public class FoamSolver
         {
             double maxScaleMean = 0; int cnt = 0;
             foreach (var t in mesh.T)
-                if (t.Neg >= 0 && t.Pos >= 0 && RegionScale[t.Neg] >= 1 && RegionScale[t.Pos] >= 1)
+                if (t.Neg >= 0 && t.Pos >= 0 && Math.Abs(RegionScale[t.Neg] - 1) < 1e-9 && Math.Abs(RegionScale[t.Pos] - 1) < 1e-9)
                 {
                     maxScaleMean += (mesh.V[t.B] - mesh.V[t.A]).Length; cnt++;
                 }
@@ -2185,8 +2258,8 @@ public class FoamSolver
         {
             if (IsDead(k)) continue; // a bubble that doesn't exist can't be inflated (Reset to rebuild it)
             DesiredVolume[k] = 4.0 / 3.0 * Math.PI * radii[k - 1] * radii[k - 1] * radii[k - 1] + (k < mergedVolume.Length ? mergedVolume[k] : 0);
-            double sc = Math.Max(0.25, Math.Min(1, S.EdgesPerRadius > 0 ? radii[k - 1] / (S.EdgesPerRadius * lockedEdge) : 1));
-            if (Math.Abs(sc - RegionScale[k]) > 0.05) { RegionScale[k] = sc; scaleChanged = true; }
+            double sc = MobiusMesher.ScaleFor(radii[k - 1], lockedEdge, S.EdgesPerRadius);
+            if (Math.Abs(sc - RegionScale[k]) > 0.05) { RegionScale[k] = sc; scaleChanged = true; sizeFieldVersion = -1; }
         }
         if (scaleChanged) UpdateVertexScale();
     }
@@ -2376,18 +2449,38 @@ public class FoamSolver
         return 1.0 / (a > floor ? a : floor);
     }
 
-    // True when more than 1% of edges have drifted outside [0.5 L, 1.6 L].
+    // True when more than 1% of edges have drifted outside [0.5 L, 1.6 L] x the local size.
+    // Uses the remesher's graded size field (cached per topology version: vertices move slowly).
+    double[] sizeField; int sizeFieldVersion = -1; double[] sizeFieldScale;
     public bool NeedsRemesh()
     {
         double L = S.EdgeLength > 0 ? S.EdgeLength : lockedEdge;
         double lo = 0.25 * L * L, hi = 2.56 * L * L;
+        if (sizeFieldVersion != TopologyVersion || sizeFieldScale != RegionScale)
+        {
+            sizeField = Remesher.SizeField(Mesh, RegionScale, L);
+            sizeFieldVersion = TopologyVersion; sizeFieldScale = RegionScale;
+        }
         int bad = 0;
         var V = Mesh.V;
         foreach (var t in Mesh.T)
         {
             Vec3 a = V[t.A], b = V[t.B];
             double dx = b.X - a.X, dy = b.Y - a.Y, dz = b.Z - a.Z, l2 = dx * dx + dy * dy + dz * dz;
-            double sc = RegionScale == null ? 1 : Math.Min(t.Neg >= 0 ? RegionScale[t.Neg] : 1, t.Pos >= 0 ? RegionScale[t.Pos] : 1);
+            if (sizeField != null && t.A < sizeField.Length && t.B < sizeField.Length)
+            {
+                double fs = Math.Min(sizeField[t.A], sizeField[t.B]); fs *= fs;
+                if (l2 < lo * fs || l2 > hi * fs) bad++;
+                continue;
+            }
+            // Same rule as Remesher.EdgeScale: the smaller bubble decides; outside / solid don't constrain.
+            double sc = 1;
+            if (RegionScale != null)
+            {
+                double sn = t.Neg > 0 ? RegionScale[t.Neg] : double.MaxValue, sp = t.Pos > 0 ? RegionScale[t.Pos] : double.MaxValue;
+                sc = Math.Min(sn, sp);
+                if (sc == double.MaxValue) sc = 1;
+            }
             sc *= sc;
             if (l2 < lo * sc || l2 > hi * sc) bad++;
         }
@@ -3859,9 +3952,11 @@ public static class Rearranger
                 // only counts while the border is still shrinking. Tiny bubbles have short but
                 // stable borders, and the old global test (0.5 x CellSize) rebuilt every ~150 steps
                 // for 28 bubbles in Alex's run, costing them 30-55% volume each time.
-                double local = 1;
+                // Big bubbles are meshed coarser (scale > 1), so their borders' "short" threshold scales up too.
+                double local = double.MaxValue;
                 if (s.RegionScale != null)
                     foreach (int r in regions) if (r > 0 && r < s.RegionScale.Length) local = Math.Min(local, s.RegionScale[r]);
+                if (local == double.MaxValue) local = 1;
                 string key = string.Join("-", regions);
                 double before;
                 bool shrinking = prevLength == null || (prevLength.TryGetValue(key, out before) && len < 0.85 * before);
@@ -4172,7 +4267,7 @@ public static class Rearranger
         {
             var sc = new double[job.Scale.Length + 1];
             Array.Copy(job.Scale, sc, job.Scale.Length);
-            sc[sc.Length - 1] = Math.Max(0.25, Math.Min(1, s.S.EdgesPerRadius > 0 ? radius / (s.S.EdgesPerRadius * s.TargetEdge) : 1));
+            sc[sc.Length - 1] = MobiusMesher.ScaleFor(radius, s.TargetEdge, s.S.EdgesPerRadius);
             job.Scale = sc;
         }
         job.AddRadius = radius;

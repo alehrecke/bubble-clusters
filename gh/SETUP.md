@@ -30,7 +30,7 @@ The same component is available compiled: `dotnet build plugin -c Release` → `
 | `HostPlane` | Plane | Item (optional) |
 | `HostMesh` | Mesh | Item (optional) |
 
-Outputs: `Films`, `Bubbles`, `Borders`, `Nodes`, `Pressures`, `Info`.
+Outputs: `Films`, `Bubbles`, `Borders`, `Nodes`, `Pressures`, `Info`, `Caps`.
 
 ## 2. A first test (double bubble, should match Glassner)
 - `Centers`: two points, (0,0,0) and (0.8888,0,0)
@@ -123,7 +123,9 @@ Colours, transparency and line weight are in `Settings` at the top of the script
 - `Borders`: Plateau-border polylines, ready to pipe for jewelry.
 - `Nodes`: the four-way junctions.
 - `Bubbles`: one closed mesh per bubble (for inflatables).
-- `Films`: one open mesh per wall or cap.
+- `Films`: the walls between bubbles, one open mesh per pair of touching bubbles.
+- `Caps`: the outer films (each bubble's surface facing the air).
+- The plugin always fills its outputs. The paste-in script fills an output only if it's wired when the component solves: wire it before the run settles, or press Reset.
 
 ## 6. Recordings (how Claude sees your run)
 Each rebuild writes `runs/<timestamp>/` (newest 5 kept):

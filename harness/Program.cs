@@ -356,6 +356,7 @@ public static class Program
             return 0;
         }
         if (cmd == "host") { HostTests(args.Length > 1 ? args[1] : "all"); return 0; }
+        if (cmd == "big") { BigTests(args.Length > 1 ? args[1] : "all"); return 0; }
         if (cmd == "replay") { Replay(args[1], args.Length > 2 ? int.Parse(args[2]) : 2000); return 0; }
         string only = args.Length > 1 ? args[1] : null;
         if (only == null || only == "double") DoubleBubble(1.0, 0.7, 1.0);
@@ -892,6 +893,68 @@ public static class Program
             Console.WriteLine(string.Format(CI, "  footprint vertices off the ball by at most {0:G2}; contact {1}", off, FoamAnalysis.ContactAngles(s.Mesh)));
             var vol = s.Mesh.Volumes();
             Console.WriteLine("  volume/desired: " + string.Join(" ", Enumerable.Range(1, s.Mesh.BubbleCount).Select(k => (vol[k] / s.DesiredVolume[k]).ToString("F3", CI))));
+        }
+    }
+
+    // Big bubbles are meshed coarser (MobiusMesher.ScaleFor up to 4x CellSize).
+    static void BigTests(string which)
+    {
+        if (which == "all" || which == "double")
+        {
+            Console.WriteLine("\n== big: double bubble r 3 + r 0.6 at CellSize 0.1 (big one meshed 4x coarser) ==");
+            var c = new List<Vec3> { new Vec3(0, 0, 0), new Vec3(3.0, 0, 0) };
+            var r = new List<double> { 3.0, 0.6 };
+            var s = Relax(c, r, 0.1, 1200, new SolverSettings { Smooth = double.Parse(Environment.GetEnvironmentVariable("SMOOTH") ?? "0.3", CI) }, true);
+            int extra = int.Parse(Environment.GetEnvironmentVariable("EXTRA") ?? "0");
+            for (int done = 0; done < extra; done += 500) Run(s, 500, "extra relax");
+            Vec3 cc; double fa, fb, fw;
+            FoamAnalysis.FitSphere(FoamAnalysis.PairVertices(s.Mesh, 0, 1), out cc, out fa);
+            FoamAnalysis.FitSphere(FoamAnalysis.PairVertices(s.Mesh, 0, 2), out cc, out fb);
+            FoamAnalysis.FitSphere(FoamAnalysis.PairVertices(s.Mesh, 1, 2), out cc, out fw);
+            double g = fa * fb / Math.Abs(fa - fb);
+            Console.WriteLine(string.Format(CI, "  tris {0}; outer radii {1:F4} / {2:F4}; wall {3:F4} vs Glassner {4:F4} ({5:P2}); pressures {6:F4} vs 2/r {7:F4}, {8:F4} vs {9:F4}",
+                s.Mesh.T.Count, fa, fb, fw, g, Math.Abs(fw - g) / g, s.Pressure[1], 2 / fa, s.Pressure[2], 2 / fb));
+            // Per border edge: worst angle deviation and the height of the triangle on each film (0|1 big outer, 0|2 small outer, 1|2 wall).
+            var m = s.Mesh;
+            var rows = new List<Tuple<double, string>>();
+            foreach (var kv in m.EdgeTris())
+            {
+                if (kv.Value.Count != 3) continue;
+                int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
+                Vec3 e = (m.V[b] - m.V[a]).Normalized(), mid = (m.V[a] + m.V[b]) * 0.5;
+                var dirs = new List<Vec3>(); var info2 = new List<string>();
+                foreach (int ti in kv.Value)
+                {
+                    var t = m.T[ti];
+                    int o = t.A != a && t.A != b ? t.A : (t.B != a && t.B != b ? t.B : t.C);
+                    Vec3 d = m.V[o] - mid; Vec3 dp = d - e * Vec3.Dot(d, e);
+                    dirs.Add(dp.Normalized());
+                    info2.Add(string.Format(CI, "{0}|{1} h{2:F3}", Math.Min(t.Neg, t.Pos), Math.Max(t.Neg, t.Pos), dp.Length));
+                }
+                double worst = 0;
+                for (int i = 0; i < 3; i++) for (int j = i + 1; j < 3; j++)
+                    worst = Math.Max(worst, Math.Abs(Math.Acos(Math.Max(-1, Math.Min(1, Vec3.Dot(dirs[i], dirs[j])))) * 180 / Math.PI - 120));
+                rows.Add(Tuple.Create(worst, string.Format(CI, "edge {0:F3}: ", (m.V[b] - m.V[a]).Length) + string.Join(", ", info2.OrderBy(x => x))));
+            }
+            rows.Sort((x, y) => y.Item1.CompareTo(x.Item1));
+            Console.WriteLine(string.Format(CI, "  border edges {0}; > 10 deg off: {1}; worst five:", rows.Count, rows.Count(x => x.Item1 > 10)));
+            foreach (var row in rows.Take(5)) Console.WriteLine(string.Format(CI, "    {0,5:F1} deg  {1}", row.Item1, row.Item2));
+            Console.WriteLine("    median: " + rows[rows.Count / 2].Item2 + string.Format(CI, " ({0:F1} deg)", rows[rows.Count / 2].Item1));
+        }
+        if (which == "all" || which == "add")
+        {
+            Console.WriteLine("\n== big: Alex's cluster (big_gh) + an r 7.07 bubble dropped next to it (refused in GH before) ==");
+            List<double> r;
+            var s = LoadFixture("fixtures/big_gh", out r, new SolverSettings { AsyncRearrange = true });
+            Run(s, 400, "settle, tris " + s.Mesh.T.Count);
+            s.S.Gather = 0.5; s.S.GatherTo = new Vec3(0, -1.5, 0);
+            s.RequestAdd(7.07, 1, true, new Vec3(-2.7, -1.4, 9.0));
+            for (int round = 0; round < 12; round++) Run(s, 250, "after r 7.07 add, round " + round + ", tris " + s.Mesh.T.Count + ", pieces " + Pieces(s));
+            s.S.Gather = 0;
+            for (int round = 0; round < 4; round++) Run(s, 250, "Gather off, tris " + s.Mesh.T.Count);
+            var vol = s.Mesh.Volumes();
+            Console.WriteLine("  bubbles " + s.Mesh.BubbleCount + ", pieces " + Pieces(s) + ", tris " + s.Mesh.T.Count + "; volume/desired: " +
+                string.Join(" ", Enumerable.Range(1, s.Mesh.BubbleCount).Select(k => (vol[k] / s.DesiredVolume[k]).ToString("F2", CI))));
         }
     }
 

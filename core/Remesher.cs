@@ -24,11 +24,13 @@ public static class Remesher
         public readonly FoamMesh M;
         public readonly List<List<int>> VT;
         public readonly List<bool> Dead;
+        public readonly List<double> Size;   // per vertex edge-size scale (graded field, see SizeField)
         readonly List<int> scratch = new List<int>(8);
 
-        public Topo(FoamMesh m)
+        public Topo(FoamMesh m, double[] regionScale = null, double L = 1)
         {
             M = m;
+            Size = new List<double>(SizeField(m, regionScale, L));
             VT = new List<List<int>>(m.V.Count + 64);
             for (int v = 0; v < m.V.Count; v++) VT.Add(new List<int>(7));
             Dead = new List<bool>(m.T.Count + 64);
@@ -40,7 +42,9 @@ public static class Remesher
             }
         }
 
-        public int AddVertex(Vec3 p) { M.V.Add(p); VT.Add(new List<int>(7)); return M.V.Count - 1; }
+        public int AddVertex(Vec3 p, double size) { M.V.Add(p); VT.Add(new List<int>(7)); Size.Add(size); return M.V.Count - 1; }
+
+        public double EdgeSize(int a, int b) { return Math.Min(Size[a], Size[b]); }
 
         public int AddTri(FoamTri t)
         {
@@ -173,15 +177,50 @@ public static class Remesher
     // Optional per-region size scale in (0, 1] (index = region, [0] = outside = 1): edges touching
     // region k aim for L * scale[k], so small bubbles get proportionally finer triangles.
     // Passed as a parameter (not a static) because rebuilds run on a background thread.
-    static double EdgeScale(FoamMesh m, List<int> tris, double[] sc)
+    // How fast the target edge size may grow with distance: scale + Grading x (distance / L).
+    public const double Grading = 0.3;
+
+    // Per-vertex edge-size scale. A vertex starts at the smallest scale of the bubbles around it (a
+    // wall between a big and a small bubble is meshed for the small one; the outside air and a host
+    // solid don't constrain, so a big bubble's outer film may be coarser than the base edge). Then the
+    // field is limited to grow by at most Grading x (distance / L) between neighbours, so sizes change
+    // gradually. Without grading, a coarse big-bubble film met a fine border in one row of triangles:
+    // noisy angles and a remesh every 10 steps (double bubble r 3 + r 0.6 at CellSize 0.1).
+    public static double[] SizeField(FoamMesh m, double[] sc, double L)
     {
-        if (sc == null) return 1;
-        double s = 1;
-        foreach (int ti in tris)
+        int nv = m.V.Count;
+        var s = new double[nv];
+        if (sc == null) { for (int v = 0; v < nv; v++) s[v] = 1; return s; }
+        for (int v = 0; v < nv; v++) s[v] = double.MaxValue;
+        foreach (var t in m.T)
         {
-            var t = m.T[ti];
-            if (t.Neg >= 0 && t.Neg < sc.Length && sc[t.Neg] < s) s = sc[t.Neg];
-            if (t.Pos >= 0 && t.Pos < sc.Length && sc[t.Pos] < s) s = sc[t.Pos];
+            double ts = double.MaxValue;
+            if (t.Neg > 0 && t.Neg < sc.Length) ts = Math.Min(ts, sc[t.Neg]);
+            if (t.Pos > 0 && t.Pos < sc.Length) ts = Math.Min(ts, sc[t.Pos]);
+            if (ts == double.MaxValue) continue;
+            if (ts < s[t.A]) s[t.A] = ts;
+            if (ts < s[t.B]) s[t.B] = ts;
+            if (ts < s[t.C]) s[t.C] = ts;
+        }
+        for (int v = 0; v < nv; v++) if (s[v] == double.MaxValue) s[v] = 1;
+        // Edges once, then relaxation sweeps (sizes only ever go down, so this terminates).
+        var keys = new long[3 * m.T.Count];
+        int n = 0;
+        foreach (var t in m.T) { keys[n++] = FoamMesh.EdgeKey(t.A, t.B); keys[n++] = FoamMesh.EdgeKey(t.B, t.C); keys[n++] = FoamMesh.EdgeKey(t.C, t.A); }
+        Array.Sort(keys, 0, n);
+        double g = Grading / Math.Max(L, 1e-12);
+        for (int sweep = 0; sweep < 60; sweep++)
+        {
+            bool changed = false;
+            for (int i = 0; i < n; i++)
+            {
+                if (i > 0 && keys[i] == keys[i - 1]) continue;
+                int a = (int)(keys[i] >> 32), b = (int)(keys[i] & 0xffffffff);
+                double d = g * (m.V[a] - m.V[b]).Length;
+                if (s[a] > s[b] + d) { s[a] = s[b] + d; changed = true; }
+                else if (s[b] > s[a] + d) { s[b] = s[a] + d; changed = true; }
+            }
+            if (!changed) break;
         }
         return s;
     }
@@ -207,7 +246,7 @@ public static class Remesher
 
     public static int SplitLong(FoamMesh m, double maxLen, bool chords = false, double[] scale = null, int maxPasses = 6)
     {
-        var tp = new Topo(m);
+        var tp = new Topo(m, scale, maxLen < double.MaxValue ? maxLen * 0.75 : 1);
         var tris = new List<int>(4);
         int total = 0;
         List<bool> onBorder = chords ? new List<bool>(tp.BorderVertices(tp.Edges())) : null;
@@ -223,7 +262,7 @@ public static class Remesher
                 double len = (m.V[a] - m.V[b]).Length;
                 tp.EdgeTris(a, b, tris);
                 bool chord = chords && tris.Count == 2 && onBorder[a] && onBorder[b] && !m.IsBorder(tris);
-                if (len > maxLen * EdgeScale(m, tris, scale) || chord) cand.Add(new KeyValuePair<long, double>(e, len));
+                if (len > maxLen * tp.EdgeSize(a, b) || chord) cand.Add(new KeyValuePair<long, double>(e, len));
             }
             if (cand.Count == 0) break;
             cand.Sort((p, q) => q.Value.CompareTo(p.Value));
@@ -234,7 +273,7 @@ public static class Remesher
                 tp.EdgeTris(a, b, tris);
                 if (tris.Count == 0) continue;            // already split this pass
                 bool border = m.IsBorder(tris);
-                int mid = tp.AddVertex((m.V[a] + m.V[b]) * 0.5);
+                int mid = tp.AddVertex((m.V[a] + m.V[b]) * 0.5, tp.EdgeSize(a, b));
                 if (chords) onBorder.Add(border);         // a border's midpoint is on the border; a film edge's isn't
                 foreach (int ti in tris.ToArray())
                 {
@@ -273,7 +312,7 @@ public static class Remesher
 
     public static int CollapseShort(FoamMesh m, double minLen, double maxLen, double[] scale = null, int maxPasses = 6)
     {
-        var tp = new Topo(m);
+        var tp = new Topo(m, scale, maxLen * 0.75);
         var etris = new List<int>(4);
         var regU = new List<int>(5); var regV = new List<int>(5);
         var ringU = new List<int>(8); var ringV = new List<int>(8); var ringD = new List<int>(8); var ringK = new List<int>(8);
@@ -290,7 +329,7 @@ public static class Remesher
             {
                 int a = (int)(e >> 32), b = (int)(e & 0xffffffff);
                 double len = (m.V[a] - m.V[b]).Length;
-                if (len < minLen * EdgeScale(m, tp.EdgeTris(a, b, etris), scale)) cand.Add(new KeyValuePair<long, double>(e, len));
+                if (len < minLen * tp.EdgeSize(a, b)) cand.Add(new KeyValuePair<long, double>(e, len));
             }
             if (cand.Count == 0) break;
             cand.Sort((p, q) => p.Value.CompareTo(q.Value));
@@ -301,7 +340,7 @@ public static class Remesher
                 tp.EdgeTris(u, v, etris);
                 if (etris.Count == 0) continue;                          // gone (a neighbour collapsed)
                 double len = (m.V[u] - m.V[v]).Length;
-                if (len >= minLen * EdgeScale(m, etris, scale)) continue; // no longer short
+                if (len >= minLen * tp.EdgeSize(u, v)) continue; // no longer short
                 bool borderEdge = m.IsBorder(etris);
                 tp.Regions(u, regU); tp.Regions(v, regV);
                 int bu = tp.BorderCount(u), bv = tp.BorderCount(v);
@@ -342,7 +381,7 @@ public static class Remesher
                     }
                 if (makesChord) continue;
                 bool tooLong = false;
-                double maxHere = maxLen * EdgeScale(m, etris, scale);
+                double maxHere = maxLen * tp.EdgeSize(u, v);
                 foreach (int w in rDrop) if ((m.V[w] - target).Length > maxHere) { tooLong = true; break; }
                 foreach (int w in rKeep) if (!tooLong && (m.V[w] - target).Length > maxHere) tooLong = true;
                 if (tooLong) continue;
@@ -362,6 +401,7 @@ public static class Remesher
                 }
                 tp.VT[drop].Clear();
                 m.V[keep] = target;
+                tp.Size[keep] = Math.Min(tp.Size[keep], tp.Size[drop]);
                 dirty.Add(keep);
                 foreach (int w in rKeep) dirty.Add(w);
                 foreach (int w in rDrop) dirty.Add(w);

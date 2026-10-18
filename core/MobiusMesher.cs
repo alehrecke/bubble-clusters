@@ -54,14 +54,30 @@ public static class MobiusMesher
         return Build(BubbleFunctions.FromSpheres(centers, radii, host), lo, hi, h, out info, SizeScale(radii, h, 6));
     }
 
-    // Per-region edge-size scale: about `edgesPerRadius` edges across each bubble's radius,
-    // never finer than 1/4 of the base edge h. Index 0 (outside) = 1.
+    // Per-region edge-size scale (index 0 = outside = 1):
+    //   small bubbles: about `edgesPerRadius` edges across the radius, down to MinScale x h
+    //   ordinary bubbles: the base edge h (CellSize means what it says)
+    //   big bubbles (r > CoarsenEdgesPerRadius x h): coarser, r / (CoarsenEdgesPerRadius x h), up to MaxCoarsen x h
+    // Big bubbles used to be capped at h, so their triangle count grew with r^2: an r 7 add at CellSize
+    // 0.2 needed ~40k triangles and was refused (Alex's run 2026-10-16_011841). Coarsening is capped at 2x:
+    // at 4x the border angles next to small bubbles scattered 6.7 deg (vs 2.9 uncoarsened, 3.6 at 2x;
+    // harness `big double`). It starts only at 15 x h: starting at 6 x h coarsened ordinary bubbles too
+    // and degraded the benchmarks (quad-bubble node scatter 4.4 -> 7.3 deg).
+    public const double MinScale = 0.25, MaxCoarsen = 2, CoarsenEdgesPerRadius = 15;
+
+    public static double ScaleFor(double r, double h, double edgesPerRadius)
+    {
+        if (!(edgesPerRadius > 0)) return 1;
+        double fine = r / (edgesPerRadius * h);
+        if (fine < 1) return Math.Max(MinScale, fine);
+        return Math.Max(1, Math.Min(MaxCoarsen, r / (CoarsenEdgesPerRadius * h)));
+    }
+
     public static double[] SizeScale(IList<double> radii, double h, double edgesPerRadius)
     {
         var sc = new double[radii.Count + 1];
         sc[0] = 1;
-        for (int i = 0; i < radii.Count; i++)
-            sc[i + 1] = edgesPerRadius > 0 ? Math.Max(0.25, Math.Min(1, radii[i] / (edgesPerRadius * h))) : 1;
+        for (int i = 0; i < radii.Count; i++) sc[i + 1] = ScaleFor(radii[i], h, edgesPerRadius);
         return sc;
     }
 

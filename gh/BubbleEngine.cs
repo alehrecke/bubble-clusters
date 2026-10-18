@@ -205,12 +205,16 @@ public class BubbleEngine
 {
     public IGH_Component Component;
     public GH_Document GrasshopperDocument;
+    // Fill every output on every solve. The plugin sets this: its preview override replaces Grasshopper's
+    // default preview, so filled outputs don't draw twice. The paste-in script can't stop the default
+    // preview, so it fills outputs only when wired (wire them before the run settles, or press Reset).
+    public bool AlwaysOutput;
 
     public void Solve(List<Point3d> Centers, List<double> Radii, double CellSize, bool Pack, bool Reset, bool Run,
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
                            Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh,
                            ref object Films, ref object Bubbles, ref object Borders, ref object Nodes,
-                           ref object Pressures, ref object Info)
+                           ref object Pressures, ref object Info, ref object Caps)
     {
         if (Centers == null || Radii == null || Centers.Count == 0 || Centers.Count != Radii.Count)
         { Info = "Need Centers and Radii lists of the same length."; return; }
@@ -237,12 +241,12 @@ public class BubbleEngine
         if (Reset || run == null || run.Signature != sig)
         {
             double h = CellSize > 0 ? CellSize : Radii.Min() / 6.0;
-            // Refuse builds that would lock Rhino up. Upper bound: every sphere fully exposed.
-            double sphereArea = Radii.Sum(r => 4 * Math.PI * r * r);
-            double estTris = sphereArea / (0.433 * h * h);
+            // Refuse builds that would lock Rhino up. Upper bound: every sphere fully exposed, each at its own edge size.
+            double estTris = Radii.Sum(r => EstTris(r, h));
             if (estTris > Settings.MaxTriangles)
             {
-                double hOk = Math.Sqrt(sphereArea / (0.433 * Settings.MaxTriangles));
+                double hOk = h;
+                while (Radii.Sum(r => EstTris(r, hOk)) > Settings.MaxTriangles) hOk *= 1.1;
                 Info = string.Format(CultureInfo.InvariantCulture,
                     "Not built: about {0:N0} triangles at CellSize {1:G3} (limit {2:N0}).\n" +
                     "Radii range {3:G3} to {4:G3}. Check for a typo, or use CellSize >= {5:G3}.",
@@ -306,9 +310,11 @@ public class BubbleEngine
         run.View.Update(s);
         current = run;
 
-        // Outputs only when wired: the component draws its own preview (see DrawViewport*),
-        // and filling unwired outputs would make Grasshopper draw the default preview on top.
-        if (Wired("Films")) Films = run.View.Films.Select(x => x.DuplicateMesh()).ToList();
+        // Films = the walls between bubbles (one mesh per pair); Caps = the outer films; Bubbles = closed volumes.
+        // In the script, outputs are filled only when wired (see AlwaysOutput). In 2026-10-16 runs a Films wire
+        // added after the run had settled stayed empty, because nothing re-solved the component.
+        if (Wired("Films")) Films = Enumerable.Range(0, run.View.Films.Count).Where(i => run.View.FilmIsWall[i]).Select(i => run.View.Films[i].DuplicateMesh()).ToList();
+        if (Wired("Caps")) Caps = Enumerable.Range(0, run.View.Films.Count).Where(i => !run.View.FilmIsWall[i] && !run.View.FilmIsFoot[i]).Select(i => run.View.Films[i].DuplicateMesh()).ToList();
         if (Wired("Bubbles")) Bubbles = BubbleMeshes(m);
         if (Wired("Borders")) Borders = run.View.Borders.Select(pl => new PolylineCurve(pl)).ToList();
         if (Wired("Nodes")) Nodes = run.View.Nodes;
@@ -407,11 +413,12 @@ public class BubbleEngine
             // Same guard as the initial build: AddRadius 10 into a cluster of r ~1 bubbles took the mesh from
             // 32k to 72k triangles, with 3.7 s ticks and 25 s rebuilds (Alex's runs 2026-10-15_233324, 2026-10-16_000150).
             double h = s.TargetEdge;
-            double estAdd = 4 * Math.PI * r * r / (0.433 * h * h);
+            double estAdd = EstTris(r, h);
             int room = Settings.MaxTriangles - s.Mesh.T.Count;
             if (estAdd > room)
             {
-                double rMax = room > 0 ? Math.Sqrt(room * 0.433 * h * h / (4 * Math.PI)) : 0;
+                double rMax = 0;
+                for (double rr = h; rr < 1e4 && EstTris(rr, h) <= room; rr *= 1.05) rMax = rr;
                 run.Event("add refused: r " + r.ToString("G3", CultureInfo.InvariantCulture) + " would add about " + estAdd.ToString("N0", CultureInfo.InvariantCulture) +
                           " triangles (limit " + Settings.MaxTriangles.ToString("N0", CultureInfo.InvariantCulture) + ", " + s.Mesh.T.Count.ToString("N0", CultureInfo.InvariantCulture) +
                           " now). Largest that fits: r " + rMax.ToString("G2", CultureInfo.InvariantCulture) + ", or raise CellSize.");
@@ -517,6 +524,14 @@ public class BubbleEngine
     // Look outputs up by name: Rhino 8 script components can have an extra output (e.g. "out")
     // ahead of ours, so positions shift. Using position 1 for Bubbles returned null.
     // An output we can't find is treated as wired, so it always gets data.
+    // Upper bound on a bubble's triangles (fully exposed sphere) at its own edge size (see MobiusMesher.ScaleFor):
+    // about 1,000 for any bubble between 1.5 and 24 x CellSize in radius, more beyond that.
+    static double EstTris(double r, double h)
+    {
+        double e = h * MobiusMesher.ScaleFor(r, h, new SolverSettings().EdgesPerRadius);
+        return 4 * Math.PI * r * r / (0.433 * e * e);
+    }
+
     bool InputWired(string name)
     {
         foreach (var p in Component.Params.Input)
@@ -526,6 +541,7 @@ public class BubbleEngine
 
     bool Wired(string name)
     {
+        if (AlwaysOutput) return true;
         foreach (var p in Component.Params.Output)
             if (p.NickName == name || p.Name == name) return p.Recipients.Count > 0;
         return true;

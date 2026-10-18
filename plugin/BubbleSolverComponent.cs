@@ -46,12 +46,13 @@ namespace BubbleClusters
 
         protected override void RegisterOutputParams(GH_OutputParamManager p)
         {
-            p.AddMeshParameter("Films", "Films", "One mesh per film (walls and outer caps).", GH_ParamAccess.list);
+            p.AddMeshParameter("Films", "Films", "The walls between bubbles: one mesh per pair of touching bubbles.", GH_ParamAccess.list);
             p.AddMeshParameter("Bubbles", "Bubbles", "One closed mesh per bubble, normals outward.", GH_ParamAccess.list);
             p.AddCurveParameter("Borders", "Borders", "Plateau borders (polylines).", GH_ParamAccess.list);
             p.AddPointParameter("Nodes", "Nodes", "Points where four borders meet.", GH_ParamAccess.list);
             p.AddNumberParameter("Pressures", "Pressures", "Per bubble, relative to outside.", GH_ParamAccess.list);
             p.AddTextParameter("Info", "Info", "Diagnostics.", GH_ParamAccess.item);
+            p.AddMeshParameter("Caps", "Caps", "The outer films (each bubble's surface facing the air).", GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -69,16 +70,18 @@ namespace BubbleClusters
             DA.GetData(14, ref hostPlane); DA.GetData(15, ref hostMesh);
 
             engine.Component = this;
+            engine.AlwaysOutput = true;
             engine.GrasshopperDocument = OnPingDocument();
-            object films = null, bubbles = null, borders = null, nodes = null, pressures = null, info = null;
+            object films = null, bubbles = null, borders = null, nodes = null, pressures = null, info = null, caps = null;
             engine.Solve(centers, radii, cell, pack, reset, run, pull, add, addRadius, pop, popAt, addAt, gather, gatherTo,
-                         hostPlane, hostMesh, ref films, ref bubbles, ref borders, ref nodes, ref pressures, ref info);
+                         hostPlane, hostMesh, ref films, ref bubbles, ref borders, ref nodes, ref pressures, ref info, ref caps);
             if (films != null) DA.SetDataList(0, (IEnumerable)films);
             if (bubbles != null) DA.SetDataList(1, (IEnumerable)bubbles);
             if (borders != null) DA.SetDataList(2, (IEnumerable)borders);
             if (nodes != null) DA.SetDataList(3, (IEnumerable)nodes);
             if (pressures != null) DA.SetDataList(4, (IEnumerable)pressures);
             if (info != null) DA.SetData(5, info.ToString());
+            if (caps != null) DA.SetDataList(6, (IEnumerable)caps);
         }
 
         public override BoundingBox ClippingBox { get { return engine.ClippingBox; } }

@@ -89,9 +89,11 @@ public static class Rearranger
                 // only counts while the border is still shrinking. Tiny bubbles have short but
                 // stable borders, and the old global test (0.5 x CellSize) rebuilt every ~150 steps
                 // for 28 bubbles in Alex's run, costing them 30-55% volume each time.
-                double local = 1;
+                // Big bubbles are meshed coarser (scale > 1), so their borders' "short" threshold scales up too.
+                double local = double.MaxValue;
                 if (s.RegionScale != null)
                     foreach (int r in regions) if (r > 0 && r < s.RegionScale.Length) local = Math.Min(local, s.RegionScale[r]);
+                if (local == double.MaxValue) local = 1;
                 string key = string.Join("-", regions);
                 double before;
                 bool shrinking = prevLength == null || (prevLength.TryGetValue(key, out before) && len < 0.85 * before);
@@ -402,7 +404,7 @@ public static class Rearranger
         {
             var sc = new double[job.Scale.Length + 1];
             Array.Copy(job.Scale, sc, job.Scale.Length);
-            sc[sc.Length - 1] = Math.Max(0.25, Math.Min(1, s.S.EdgesPerRadius > 0 ? radius / (s.S.EdgesPerRadius * s.TargetEdge) : 1));
+            sc[sc.Length - 1] = MobiusMesher.ScaleFor(radius, s.TargetEdge, s.S.EdgesPerRadius);
             job.Scale = sc;
         }
         job.AddRadius = radius;

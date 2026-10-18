@@ -112,7 +112,7 @@ public class FoamSolver
         {
             double maxScaleMean = 0; int cnt = 0;
             foreach (var t in mesh.T)
-                if (t.Neg >= 0 && t.Pos >= 0 && RegionScale[t.Neg] >= 1 && RegionScale[t.Pos] >= 1)
+                if (t.Neg >= 0 && t.Pos >= 0 && Math.Abs(RegionScale[t.Neg] - 1) < 1e-9 && Math.Abs(RegionScale[t.Pos] - 1) < 1e-9)
                 {
                     maxScaleMean += (mesh.V[t.B] - mesh.V[t.A]).Length; cnt++;
                 }
@@ -257,8 +257,8 @@ public class FoamSolver
         {
             if (IsDead(k)) continue; // a bubble that doesn't exist can't be inflated (Reset to rebuild it)
             DesiredVolume[k] = 4.0 / 3.0 * Math.PI * radii[k - 1] * radii[k - 1] * radii[k - 1] + (k < mergedVolume.Length ? mergedVolume[k] : 0);
-            double sc = Math.Max(0.25, Math.Min(1, S.EdgesPerRadius > 0 ? radii[k - 1] / (S.EdgesPerRadius * lockedEdge) : 1));
-            if (Math.Abs(sc - RegionScale[k]) > 0.05) { RegionScale[k] = sc; scaleChanged = true; }
+            double sc = MobiusMesher.ScaleFor(radii[k - 1], lockedEdge, S.EdgesPerRadius);
+            if (Math.Abs(sc - RegionScale[k]) > 0.05) { RegionScale[k] = sc; scaleChanged = true; sizeFieldVersion = -1; }
         }
         if (scaleChanged) UpdateVertexScale();
     }
@@ -448,18 +448,38 @@ public class FoamSolver
         return 1.0 / (a > floor ? a : floor);
     }
 
-    // True when more than 1% of edges have drifted outside [0.5 L, 1.6 L].
+    // True when more than 1% of edges have drifted outside [0.5 L, 1.6 L] x the local size.
+    // Uses the remesher's graded size field (cached per topology version: vertices move slowly).
+    double[] sizeField; int sizeFieldVersion = -1; double[] sizeFieldScale;
     public bool NeedsRemesh()
     {
         double L = S.EdgeLength > 0 ? S.EdgeLength : lockedEdge;
         double lo = 0.25 * L * L, hi = 2.56 * L * L;
+        if (sizeFieldVersion != TopologyVersion || sizeFieldScale != RegionScale)
+        {
+            sizeField = Remesher.SizeField(Mesh, RegionScale, L);
+            sizeFieldVersion = TopologyVersion; sizeFieldScale = RegionScale;
+        }
         int bad = 0;
         var V = Mesh.V;
         foreach (var t in Mesh.T)
         {
             Vec3 a = V[t.A], b = V[t.B];
             double dx = b.X - a.X, dy = b.Y - a.Y, dz = b.Z - a.Z, l2 = dx * dx + dy * dy + dz * dz;
-            double sc = RegionScale == null ? 1 : Math.Min(t.Neg >= 0 ? RegionScale[t.Neg] : 1, t.Pos >= 0 ? RegionScale[t.Pos] : 1);
+            if (sizeField != null && t.A < sizeField.Length && t.B < sizeField.Length)
+            {
+                double fs = Math.Min(sizeField[t.A], sizeField[t.B]); fs *= fs;
+                if (l2 < lo * fs || l2 > hi * fs) bad++;
+                continue;
+            }
+            // Same rule as Remesher.EdgeScale: the smaller bubble decides; outside / solid don't constrain.
+            double sc = 1;
+            if (RegionScale != null)
+            {
+                double sn = t.Neg > 0 ? RegionScale[t.Neg] : double.MaxValue, sp = t.Pos > 0 ? RegionScale[t.Pos] : double.MaxValue;
+                sc = Math.Min(sn, sp);
+                if (sc == double.MaxValue) sc = 1;
+            }
             sc *= sc;
             if (l2 < lo * sc || l2 > hi * sc) bad++;
         }
