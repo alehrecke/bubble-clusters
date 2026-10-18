@@ -316,7 +316,8 @@ public static class Rearranger
         public Vec3[] Centroid;              // bubble centroids at Prepare (calibration rescues swallowed bubbles there)
         public List<Vec3> ZoneAt = new List<Vec3>();
         public List<double> ZoneR = new List<double>();
-        public ShapeTransfer.Stats Transfer;   // bubbles enlarged by ~one grid cell before calibration (contacts)
+        public ShapeTransfer.Stats Transfer;
+        public List<int> Dropped = new List<int>();   // bubbles too small for the rebuild grid that it lost (dropped, not refused)   // bubbles enlarged by ~one grid cell before calibration (contacts)
 
         // A fresh copy of this job (functions as prepared), to run again: harness `failrepro`.
         public RebuildJob Retry()
@@ -325,6 +326,7 @@ public static class Rearranger
             j.Fn = (Fn0 ?? Fn).Clone();
             j.Fn0 = null; j.Mesh = null; j.Candidate = null; j.Fail = null; j.Info = null; j.Calibration = null; j.Transfer = null;
             j.Grow = new List<int>(Grow); j.Shift = new List<KeyValuePair<int, Vec3>>(Shift);
+            j.Dropped = new List<int>();
             j.AddRadii = new List<double>(AddRadii); j.AddAts = new List<Vec3>(AddAts); j.AddR0s = new List<double>(AddR0s);
             return j;
         }
@@ -396,7 +398,14 @@ public static class Rearranger
                     // add in Alex's 15-bubble live runs: squeezed small bubbles fit poorly (32-46%).
                     // Only a bubble that all but vanishes is refused.
                     else if (!(vol[k] > 0.05 * CurrentVolume[k]))
-                        Fail = "bubble " + k + " would vanish (" + (vol[k] / CurrentVolume[k]).ToString("P0", CultureInfo.InvariantCulture) + " of its volume)";
+                    {
+                        // A bubble under ~2 rebuild cells in radius can fall between the grid's samples. Refusing the whole
+                        // rebuild for it froze the foam (Border Detail run 2026-10-18_182417: 15 refusals for 4 specks);
+                        // drop it instead (FoamSolver.Finish pops what's left of it).
+                        double req = Math.Pow(3 * CurrentVolume[k] / (4 * Math.PI), 1.0 / 3);
+                        if (req < 2 * H * GridFactor) Dropped.Add(k);
+                        else Fail = "bubble " + k + " would vanish (" + (vol[k] / CurrentVolume[k]).ToString("P0", CultureInfo.InvariantCulture) + " of its volume)";
+                    }
                 tTransferV = sw.ElapsedMilliseconds;
                 var hist = Remesher.EdgeHistogram(mesh);
                 if (Fail == null && (hist[1] > 0 || hist[4] + hist[5] > 0))
@@ -465,6 +474,7 @@ public static class Rearranger
     // skip: a bubble to leave alone (a seed for an add), or -1.
     // count: only the first `count` bubbles take part (a seed beyond them is ignored).
     public static bool RescueSwallowed = true;   // harness switch for A/B
+    public static int CalibrateIterations = 16;
 
     public static string CalibrateVolumes(BubbleFunctions fn, Vec3 lo, Vec3 hi, double cell, double[] target, int count, Vec3[] centroid = null)
     {
@@ -493,7 +503,7 @@ public static class Rearranger
         double bin = Math.Max(4 * cell, ext / 48);
         int bx = Math.Max(1, (int)Math.Ceiling((hi.X - lo.X) / bin)), by = Math.Max(1, (int)Math.Ceiling((hi.Y - lo.Y) / bin)), bz = Math.Max(1, (int)Math.Ceiling((hi.Z - lo.Z) / bin));
         var bins = new List<int>[bx * by * bz];
-        for (int it = 0; it < 16; it++)
+        for (int it = 0; it < CalibrateIterations; it++)
         {
             Array.Clear(vol, 0, vol.Length);
             for (int q = 0; q < bins.Length; q++) { if (bins[q] == null) bins[q] = new List<int>(4); else bins[q].Clear(); }

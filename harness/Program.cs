@@ -837,9 +837,13 @@ public static class Program
         var job = s.LastFailedJob;
         if (job == null) { Console.WriteLine("no refused rebuild in " + steps + " steps"); return; }
         Console.WriteLine("\nrefused at step " + job.Step + ": " + job.What + "\n  -> " + job.Fail + "\n  " + job.Calibration);
+        var iters = (Environment.GetEnvironmentVariable("CALIT") ?? "16").Split(',').Select(int.Parse).ToArray();
+        foreach (int itc in iters)
         foreach (bool rescue in new[] { false, true })
         {
             Rearranger.RescueSwallowed = rescue;
+            Rearranger.CalibrateIterations = itc;
+            Console.Write("\n[calibration iterations " + itc + "]");
             var j = job.Retry();
             j.Run();
             Console.WriteLine(string.Format(CI, "\nrerun, rescue {0}: {1}; {2}; {3}", rescue ? "on" : "off", j.Fail ?? "OK", j.Calibration, j.Timing));

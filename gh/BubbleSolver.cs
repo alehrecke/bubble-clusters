@@ -105,7 +105,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18f";
+    public const string Build = "2026-10-18g";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -617,7 +617,7 @@ public class BubbleEngine
     // An output we can't find is treated as wired, so it always gets data.
     // Upper bound on a bubble's triangles (fully exposed sphere) at its own edge size (see MobiusMesher.ScaleFor):
     // about 1,000 for any bubble between 1.5 and 24 x CellSize in radius, more beyond that.
-    static double EstTris(double r, double h)
+    public static double EstTris(double r, double h)
     {
         double e = h * MobiusMesher.ScaleFor(r, h, new SolverSettings().EdgesPerRadius);
         return 4 * Math.PI * r * r / (0.433 * e * e);
@@ -773,6 +773,10 @@ public class FoamHandle
     public bool Busy { get { var s = run.Solver; return s.RebuildPending || s.PendingAdds > 0 || s.PendingPops > 0; } }
     public double CellSize { get { return run.Solver.TargetEdge; } }
     public double MinRadius { get { return run.Solver.TargetEdge * run.Solver.S.RebuildGridFactor; } }
+    public int Triangles { get { return run.Solver.Mesh.T.Count; } }
+    public int TriangleLimit { get { return Settings.MaxTriangles; } }
+    // Upper bound on what a new bubble of radius r costs (a fully exposed sphere at its own edge size).
+    public double EstimateTriangles(double r) { return BubbleEngine.EstTris(r, run.Solver.TargetEdge); }
 
     public List<int> BubbleIds
     {
@@ -3094,6 +3098,19 @@ public class FoamSolver
         }
         ReplaceMesh(job.Mesh);
         if (job.AddCount > 1) MarkDead();   // a batch seed that took no space is left out, not re-inflated forever
+        var droppedNote = "";
+        if (job.Dropped.Count > 0)
+        {
+            foreach (int k in job.Dropped)
+            {
+                var pr = Pop.Apply(Mesh, k);   // what's left of it (if anything) merges or escapes
+                if (pr.Fail == null) RebuildTopology();
+                if (!DeadBubbles.Contains(k)) DeadBubbles.Add(k);
+                TargetVolume[k] = DesiredVolume[k] = 0;
+                if (k < PullOn.Length) PullOn[k] = false;
+            }
+            droppedNote = "; dropped bubble " + string.Join(", ", job.Dropped) + " (too small for the rebuild grid)";
+        }
         failedRebuilds = 0;
         Rearrangements++;
         RearrangeLog.Add("step " + job.Step + ": " + job.What + " -> rebuilt in " + job.Ms + " ms" + when + "; nodes " +
@@ -3101,7 +3118,7 @@ public class FoamSolver
                          "; smallest volume kept vs snapshot " + kept.ToString("P0", System.Globalization.CultureInfo.InvariantCulture) +
                          (reinflate.Count > 0 ? "; re-inflating bubble " + string.Join(", ", reinflate) : "") +
                          (job.Transfer != null ? "; " + job.Transfer : "") +
-                         (job.Calibration != null && job.Calibration.Contains("rescued") ? "; " + job.Calibration : "") + "; " + job.Timing);
+                         (job.Calibration != null && job.Calibration.Contains("rescued") ? "; " + job.Calibration : "") + droppedNote + "; " + job.Timing);
     }
 
     public int Added;
@@ -4199,7 +4216,9 @@ public static class BorderDetail
         var picks = new List<Pick>();
         if (cand.Count == 0) return picks;
         double total = lens.Sum();
-        double floor = Math.Max(set.MinRadius, s.TargetEdge * s.S.RebuildGridFactor);
+        // Smallest bubble a rebuild keeps reliably: 1.5 rebuild cells (smaller ones fall between grid samples
+        // and get dropped; run 2026-10-18_182417).
+        double floor = Math.Max(set.MinRadius, 1.5 * s.TargetEdge * s.S.RebuildGridFactor);
         var nodePts = nodes.Select(v => m.V[v]).ToList();
         for (int attempt = 0; attempt < set.PerBatch * 20 && picks.Count < set.PerBatch; attempt++)
         {
@@ -4218,7 +4237,9 @@ public static class BorderDetail
                 walked += l;
             }
             double local = cand[ci].Value.Length == 0 ? 1 : cand[ci].Value.Min(k => s.DesiredRadius(k));
-            double r = Math.Max(floor, local * (set.SizeMin + rng.NextDouble() * (set.SizeMax - set.SizeMin)));
+            double want = local * (set.SizeMin + rng.NextDouble() * (set.SizeMax - set.SizeMin));
+            if (floor > 1.5 * set.SizeMax * local) continue;   // this border's bubbles are too small for detail at this CellSize
+            double r = Math.Max(floor, want);
             // Spacing from other picks and from nodes.
             bool ok = true;
             foreach (var p in picks) if ((p.At - at).Length < set.Spacing * (p.Radius + r)) { ok = false; break; }
@@ -4782,7 +4803,8 @@ public static class Rearranger
         public Vec3[] Centroid;              // bubble centroids at Prepare (calibration rescues swallowed bubbles there)
         public List<Vec3> ZoneAt = new List<Vec3>();
         public List<double> ZoneR = new List<double>();
-        public ShapeTransfer.Stats Transfer;   // bubbles enlarged by ~one grid cell before calibration (contacts)
+        public ShapeTransfer.Stats Transfer;
+        public List<int> Dropped = new List<int>();   // bubbles too small for the rebuild grid that it lost (dropped, not refused)   // bubbles enlarged by ~one grid cell before calibration (contacts)
 
         // A fresh copy of this job (functions as prepared), to run again: harness `failrepro`.
         public RebuildJob Retry()
@@ -4791,6 +4813,7 @@ public static class Rearranger
             j.Fn = (Fn0 ?? Fn).Clone();
             j.Fn0 = null; j.Mesh = null; j.Candidate = null; j.Fail = null; j.Info = null; j.Calibration = null; j.Transfer = null;
             j.Grow = new List<int>(Grow); j.Shift = new List<KeyValuePair<int, Vec3>>(Shift);
+            j.Dropped = new List<int>();
             j.AddRadii = new List<double>(AddRadii); j.AddAts = new List<Vec3>(AddAts); j.AddR0s = new List<double>(AddR0s);
             return j;
         }
@@ -4862,7 +4885,14 @@ public static class Rearranger
                     // add in Alex's 15-bubble live runs: squeezed small bubbles fit poorly (32-46%).
                     // Only a bubble that all but vanishes is refused.
                     else if (!(vol[k] > 0.05 * CurrentVolume[k]))
-                        Fail = "bubble " + k + " would vanish (" + (vol[k] / CurrentVolume[k]).ToString("P0", CultureInfo.InvariantCulture) + " of its volume)";
+                    {
+                        // A bubble under ~2 rebuild cells in radius can fall between the grid's samples. Refusing the whole
+                        // rebuild for it froze the foam (Border Detail run 2026-10-18_182417: 15 refusals for 4 specks);
+                        // drop it instead (FoamSolver.Finish pops what's left of it).
+                        double req = Math.Pow(3 * CurrentVolume[k] / (4 * Math.PI), 1.0 / 3);
+                        if (req < 2 * H * GridFactor) Dropped.Add(k);
+                        else Fail = "bubble " + k + " would vanish (" + (vol[k] / CurrentVolume[k]).ToString("P0", CultureInfo.InvariantCulture) + " of its volume)";
+                    }
                 tTransferV = sw.ElapsedMilliseconds;
                 var hist = Remesher.EdgeHistogram(mesh);
                 if (Fail == null && (hist[1] > 0 || hist[4] + hist[5] > 0))
@@ -4931,6 +4961,7 @@ public static class Rearranger
     // skip: a bubble to leave alone (a seed for an add), or -1.
     // count: only the first `count` bubbles take part (a seed beyond them is ignored).
     public static bool RescueSwallowed = true;   // harness switch for A/B
+    public static int CalibrateIterations = 16;
 
     public static string CalibrateVolumes(BubbleFunctions fn, Vec3 lo, Vec3 hi, double cell, double[] target, int count, Vec3[] centroid = null)
     {
@@ -4959,7 +4990,7 @@ public static class Rearranger
         double bin = Math.Max(4 * cell, ext / 48);
         int bx = Math.Max(1, (int)Math.Ceiling((hi.X - lo.X) / bin)), by = Math.Max(1, (int)Math.Ceiling((hi.Y - lo.Y) / bin)), bz = Math.Max(1, (int)Math.Ceiling((hi.Z - lo.Z) / bin));
         var bins = new List<int>[bx * by * bz];
-        for (int it = 0; it < 16; it++)
+        for (int it = 0; it < CalibrateIterations; it++)
         {
             Array.Clear(vol, 0, vol.Length);
             for (int q = 0; q < bins.Length; q++) { if (bins[q] == null) bins[q] = new List<int>(4); else bins[q].Clear(); }

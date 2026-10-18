@@ -24,7 +24,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18f";
+    public const string Build = "2026-10-18g";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -536,7 +536,7 @@ public class BubbleEngine
     // An output we can't find is treated as wired, so it always gets data.
     // Upper bound on a bubble's triangles (fully exposed sphere) at its own edge size (see MobiusMesher.ScaleFor):
     // about 1,000 for any bubble between 1.5 and 24 x CellSize in radius, more beyond that.
-    static double EstTris(double r, double h)
+    public static double EstTris(double r, double h)
     {
         double e = h * MobiusMesher.ScaleFor(r, h, new SolverSettings().EdgesPerRadius);
         return 4 * Math.PI * r * r / (0.433 * e * e);
@@ -692,6 +692,10 @@ public class FoamHandle
     public bool Busy { get { var s = run.Solver; return s.RebuildPending || s.PendingAdds > 0 || s.PendingPops > 0; } }
     public double CellSize { get { return run.Solver.TargetEdge; } }
     public double MinRadius { get { return run.Solver.TargetEdge * run.Solver.S.RebuildGridFactor; } }
+    public int Triangles { get { return run.Solver.Mesh.T.Count; } }
+    public int TriangleLimit { get { return Settings.MaxTriangles; } }
+    // Upper bound on what a new bubble of radius r costs (a fully exposed sphere at its own edge size).
+    public double EstimateTriangles(double r) { return BubbleEngine.EstTris(r, run.Solver.TargetEdge); }
 
     public List<int> BubbleIds
     {

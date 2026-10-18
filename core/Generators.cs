@@ -53,7 +53,9 @@ public static class BorderDetail
         var picks = new List<Pick>();
         if (cand.Count == 0) return picks;
         double total = lens.Sum();
-        double floor = Math.Max(set.MinRadius, s.TargetEdge * s.S.RebuildGridFactor);
+        // Smallest bubble a rebuild keeps reliably: 1.5 rebuild cells (smaller ones fall between grid samples
+        // and get dropped; run 2026-10-18_182417).
+        double floor = Math.Max(set.MinRadius, 1.5 * s.TargetEdge * s.S.RebuildGridFactor);
         var nodePts = nodes.Select(v => m.V[v]).ToList();
         for (int attempt = 0; attempt < set.PerBatch * 20 && picks.Count < set.PerBatch; attempt++)
         {
@@ -72,7 +74,9 @@ public static class BorderDetail
                 walked += l;
             }
             double local = cand[ci].Value.Length == 0 ? 1 : cand[ci].Value.Min(k => s.DesiredRadius(k));
-            double r = Math.Max(floor, local * (set.SizeMin + rng.NextDouble() * (set.SizeMax - set.SizeMin)));
+            double want = local * (set.SizeMin + rng.NextDouble() * (set.SizeMax - set.SizeMin));
+            if (floor > 1.5 * set.SizeMax * local) continue;   // this border's bubbles are too small for detail at this CellSize
+            double r = Math.Max(floor, want);
             // Spacing from other picks and from nodes.
             bool ok = true;
             foreach (var p in picks) if ((p.At - at).Length < set.Spacing * (p.Radius + r)) { ok = false; break; }

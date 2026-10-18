@@ -360,6 +360,13 @@ Add/AddBatch/Pop/Wake. Scripts use it via `dynamic` (example `gh/examples/NodeSp
   Handle: InsertFree, Remove, FreeBubbleIds, SetForce, ClearForces, Note.
 - Harness `stream [steps] [seed] [flow] [sink]`: 3 domes on a plane; sink 0.25 → 36 spawned, all stuck, 38 rebuilds, 0 refused, volumes
   exact; sink 0 → 22 spawned, 7 floated past and were removed, 11 stuck on the domes. `replaylive` re-runs a recorded stream generator.
+**2026-10-18 (build g): first generator runs in GH (181933 stream, 182417 Border Detail, fixture `detail_gh`).** Both work. Border
+Detail made specks at the rebuild-grid limit (raised to 1 cell) → 15 "would vanish" refusals, and generators ignored the triangle
+limit (123k tris, 1 s ticks). Fixes: a rebuild that loses a bubble under 2 rebuild cells in radius now drops it (`RebuildJob.Dropped`,
+popped in Finish) instead of refusing; Border Detail floors radii at 1.5 rebuild cells and skips borders where that is > 1.5 x SizeMax x
+local; both generators pause at `Settings.MaxTriangles` (handle: Triangles, TriangleLimit, EstimateTriangles). Replay of detail_gh:
+15 → 3 refusals (crowded tiny bubbles: calibration can't place all 11 swallowed ones; more iterations didn't help; foam recovers).
+`Rearranger.CalibrateIterations` (16) and failrepro `CALIT=16,32,48` for experiments.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally

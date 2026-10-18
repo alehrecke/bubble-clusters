@@ -905,6 +905,19 @@ public class FoamSolver
         }
         ReplaceMesh(job.Mesh);
         if (job.AddCount > 1) MarkDead();   // a batch seed that took no space is left out, not re-inflated forever
+        var droppedNote = "";
+        if (job.Dropped.Count > 0)
+        {
+            foreach (int k in job.Dropped)
+            {
+                var pr = Pop.Apply(Mesh, k);   // what's left of it (if anything) merges or escapes
+                if (pr.Fail == null) RebuildTopology();
+                if (!DeadBubbles.Contains(k)) DeadBubbles.Add(k);
+                TargetVolume[k] = DesiredVolume[k] = 0;
+                if (k < PullOn.Length) PullOn[k] = false;
+            }
+            droppedNote = "; dropped bubble " + string.Join(", ", job.Dropped) + " (too small for the rebuild grid)";
+        }
         failedRebuilds = 0;
         Rearrangements++;
         RearrangeLog.Add("step " + job.Step + ": " + job.What + " -> rebuilt in " + job.Ms + " ms" + when + "; nodes " +
@@ -912,7 +925,7 @@ public class FoamSolver
                          "; smallest volume kept vs snapshot " + kept.ToString("P0", System.Globalization.CultureInfo.InvariantCulture) +
                          (reinflate.Count > 0 ? "; re-inflating bubble " + string.Join(", ", reinflate) : "") +
                          (job.Transfer != null ? "; " + job.Transfer : "") +
-                         (job.Calibration != null && job.Calibration.Contains("rescued") ? "; " + job.Calibration : "") + "; " + job.Timing);
+                         (job.Calibration != null && job.Calibration.Contains("rescued") ? "; " + job.Calibration : "") + droppedNote + "; " + job.Timing);
     }
 
     public int Added;

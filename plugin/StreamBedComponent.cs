@@ -102,7 +102,10 @@ namespace BubbleClusters
                     setKey = SetKey(set);
                     h.Note("stream generator seed " + seedUsed + " " + setKey);
                 }
+                // Respect the solver's triangle limit: stop spawning near it (floating ones keep going).
+                if (h.Triangles + h.EstimateTriangles(set.RMax) > h.TriangleLimit) set.MaxFree = 0;
                 status = StreamBed.Tick(h.Solver, set, rng, state);
+                if (set.MaxFree == 0) status += string.Format(CultureInfo.InvariantCulture, "\npaused spawning: the mesh is at {0:N0} triangles (limit {1:N0})", h.Triangles, h.TriangleLimit);
                 spawned = state.LastSpawn.Select(q => new Point3d(q.X, q.Y, q.Z)).ToList();
                 // Keep the solver running: it stops ticking once settled, and this generator only runs on its ticks.
                 if (h.Settled || state.LastSpawn.Count > 0) h.Wake();

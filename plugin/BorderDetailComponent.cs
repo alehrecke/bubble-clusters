@@ -91,7 +91,14 @@ namespace BubbleClusters
                         Where = where, Spacing = spacing,
                     };
                     var picks = BorderDetail.Choose(h.Solver, set, rng);
-                    if (picks.Count == 0) status = "no room left on the chosen borders (try lower Spacing or SizeMin)";
+                    // Respect the solver's triangle limit (the Add button does too).
+                    double cost = picks.Sum(q => h.EstimateTriangles(q.Radius));
+                    if (picks.Count > 0 && h.Triangles + cost > h.TriangleLimit)
+                    {
+                        status = string.Format(CultureInfo.InvariantCulture, "paused: the mesh is at {0:N0} triangles (limit {1:N0}); raise CellSize for more detail", h.Triangles, h.TriangleLimit);
+                        picks.Clear();
+                    }
+                    else if (picks.Count == 0) status = "no room left on the chosen borders (try lower Spacing or SizeMin, or a smaller CellSize)";
                     else
                     {
                         lastPoints = picks.Select(q => new Point3d(q.At.X, q.At.Y, q.At.Z)).ToList();
