@@ -29,8 +29,12 @@
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
   </ItemGroup>
-  <!-- Grasshopper loads *.gha: copy the built dll there. -->
+  <!-- Grasshopper loads *.gha: copy the built dll to dist/ and into Grasshopper's Libraries folder, which is where
+       Grasshopper keeps (and loads) a plugin installed by drag-and-drop. A stale copy there kept loading the old build
+       after restarts (2026-10-18). Restart Rhino after building. -->
   <Target Name="CopyGha" AfterTargets="Build">
     <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(MSBuildProjectDirectory)\..\dist\BubbleClusters.gha" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(APPDATA)\Grasshopper\Libraries\BubbleClusters.gha" ContinueOnError="true"
+          Condition="Exists('$(APPDATA)\Grasshopper\Libraries')" />
   </Target>
 </Project>
