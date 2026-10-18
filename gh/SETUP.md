@@ -43,7 +43,7 @@ Keep `Run` **off** while pasting and wiring. Then turn it on. The component re-r
 needed. Each run gets about 40 ms of solver time, then a short pause so Rhino stays responsive. It
 stops by itself ("SETTLED (area stable)"), or 6000 steps after your last live change (resize, drag, add, pop).
 
-Safety guards: a build estimated above 60,000 triangles is refused, and Info suggests a
+Safety guards: a build or add estimated above 100,000 triangles in total is refused (big bubbles are meshed coarser, so r 7 costs ~11k at CellSize 0.2), and Info suggests a
 CellSize. Info also warns when a bubble is swallowed by another, e.g. a radius typo like 7 instead
 of 0.7, which is what froze the first test. In Info you should see:
 - border angles: mean ≈ 120°, typical deviation a few degrees (mesh-level noise)

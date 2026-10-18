@@ -357,6 +357,21 @@ public static class Program
         }
         if (cmd == "host") { HostTests(args.Length > 1 ? args[1] : "all"); return 0; }
         if (cmd == "big") { BigTests(args.Length > 1 ? args[1] : "all"); return 0; }
+        if (cmd == "budget")
+        {
+            // Triangle budget of a recorded run's cluster with the current meshing, and what an add would cost.
+            List<double> r;
+            var s = LoadFixture(args[1], out r, new SolverSettings { Rearrange = false });
+            for (int i = 0; i < 400; i++) s.Step();
+            double h = s.TargetEdge;
+            Console.WriteLine(string.Format(CI, "cluster: {0} bubbles, {1} tris (CellSize {2:G3})", s.Mesh.BubbleCount, s.Mesh.T.Count, h));
+            foreach (double rad in new[] { 3.0, 5.27, 7.26, 10, 15, 20 })
+            {
+                double e = h * MobiusMesher.ScaleFor(rad, h, s.S.EdgesPerRadius);
+                Console.WriteLine(string.Format(CI, "  add r {0,5:G3}: edge {1:G3}, about {2:N0} tris", rad, e, 4 * Math.PI * rad * rad / (0.433 * e * e)));
+            }
+            return 0;
+        }
         if (cmd == "replay") { Replay(args[1], args.Length > 2 ? int.Parse(args[2]) : 2000); return 0; }
         string only = args.Length > 1 ? args[1] : null;
         if (only == null || only == "double") DoubleBubble(1.0, 0.7, 1.0);

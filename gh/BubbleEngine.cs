@@ -53,7 +53,7 @@ public static class Settings
     public static readonly Color AddAtColor = Color.FromArgb(40, 200, 255);   // AddAt marker, line to the foam, distance label
 
     // Guards against accidentally huge meshes (e.g. a radius typo).
-    public static readonly int MaxTriangles = 60000;        // estimated; above this the build is refused
+    public static readonly int MaxTriangles = 100000;       // estimated; builds and adds above this are refused. Was 60k for the paste-in script (rebuilds 7-10 s at ~47k); the plugin rebuilds ~50k in ~2.5 s
 
     // Packing pre-pass (when Pack is true).
     public static readonly int PackIterations = 1000;
