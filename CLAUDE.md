@@ -346,3 +346,9 @@ This tool has not yet been ported into the Membrane plugin repo — it's a stand
 - Films output was empty when wired after the run had settled (outputs were filled only if wired at solve time). The plugin now
   always fills outputs (`BubbleEngine.AlwaysOutput`; its preview override replaces GH's default preview). Films = walls between
   bubbles only (one mesh per pair); new output **Caps** (last) = outer films; Bubbles = closed volumes.
+- AddAt (run 2026-10-18_121617, fixture `addat_gh`): Alex's AddAt point looked inside the cluster in perspective but was 23 units in
+  front of it (y 26.9 vs cluster y -3.6..3.2), so the first add made a free bubble there. The second press sent the identical point
+  (it hadn't updated in GH; possibly an internalised point), which was now inside that free bubble, and the old rule (global nearest
+  border) put the new bubble on the cluster 23 away. `PlaceAddPoint` now uses the containing bubble's own nearest border, or its
+  surface if it has none, and logs the distance for points outside the foam. The component previews AddAt (X marker; outside the
+  foam: dotted line to the nearest bubble + "AddAt: d outside" label; included in the clipping box).

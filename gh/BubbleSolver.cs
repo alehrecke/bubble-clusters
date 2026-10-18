@@ -130,6 +130,7 @@ public static class Settings
     public static readonly int BorderThickness = 3;
     public static readonly Color NodeColor = Color.FromArgb(255, 60, 60);
     public static readonly int NodeSize = 6;
+    public static readonly Color AddAtColor = Color.FromArgb(40, 200, 255);   // AddAt marker, line to the foam, distance label
 
     // Guards against accidentally huge meshes (e.g. a radius typo).
     public static readonly int MaxTriangles = 60000;        // estimated; above this the build is refused
@@ -347,6 +348,7 @@ public class BubbleEngine
         // (every pop in run 2026-10-15_224201 was "at 0 0 0"), so check the wires.
         ApplyLive(run, Centers, Radii, Pull, Add, AddRadius, Pop, InputWired("PopAt") ? PopAt : Point3d.Unset,
                   InputWired("AddAt") ? AddAt : Point3d.Unset, Gather, InputWired("GatherTo") ? GatherTo : Point3d.Unset);
+        UpdateAddAtPreview(run, InputWired("AddAt") ? AddAt : Point3d.Unset);
 
         if (Run && !run.Settled)
         {
@@ -633,7 +635,13 @@ public class BubbleEngine
 
     public BoundingBox ClippingBox
     {
-        get { return current != null ? current.View.Box : BoundingBox.Empty; }
+        get
+        {
+            if (current == null) return BoundingBox.Empty;
+            var box = current.View.Box;
+            if (addAtShown.IsValid) box.Union(addAtShown);
+            return box;
+        }
     }
 
     public void DrawViewportMeshes(IGH_PreviewArgs args)
@@ -657,6 +665,39 @@ public class BubbleEngine
         foreach (var pl in v.Borders) args.Display.DrawPolyline(pl, Settings.BorderColor, Settings.BorderThickness);
         foreach (var p in v.Nodes)
             args.Display.DrawPoint(p, Rhino.Display.PointStyle.RoundSimple, Settings.NodeSize, Settings.NodeColor);
+        // The AddAt point, and when it's outside the foam a dotted line to the nearest bubble with the distance.
+        // A point that looks inside the cluster in a perspective view can be far off in depth (Alex's run
+        // 2026-10-18_121617: 23 units in front of the cluster).
+        if (addAtShown.IsValid)
+        {
+            args.Display.DrawPoint(addAtShown, Rhino.Display.PointStyle.X, 10, Settings.AddAtColor);
+            if (!addAtInside)
+            {
+                args.Display.DrawDottedLine(addAtShown, addAtNearest, Settings.AddAtColor);
+                args.Display.DrawDot(addAtShown, "AddAt: " + addAtDist.ToString("G3", CultureInfo.InvariantCulture) + " outside", Settings.AddAtColor, Color.White);
+            }
+        }
+    }
+
+    // AddAt preview state (updated in Solve; the inside test only when the point moves or the mesh changes).
+    Point3d addAtShown = Point3d.Unset, addAtNearest;
+    double addAtDist;
+    bool addAtInside;
+    Point3d addAtTestedAt = Point3d.Unset; int addAtTestedVersion = -1;
+
+    void UpdateAddAtPreview(BubbleRun run, Point3d addAt)
+    {
+        addAtShown = addAt;
+        if (!addAt.IsValid) return;
+        var s = run.Solver;
+        var p = new Vec3(addAt.X, addAt.Y, addAt.Z);
+        if (addAt != addAtTestedAt || s.TopologyVersion != addAtTestedVersion)
+        {
+            addAtInside = Pop.InsideBubble(s.Mesh, p) != 0;
+            addAtTestedAt = addAt; addAtTestedVersion = s.TopologyVersion;
+        }
+        var q = s.NearestFoamPoint(p, out addAtDist);
+        addAtNearest = new Point3d(q.X, q.Y, q.Z);
     }
 
     static List<Mesh> BubbleMeshes(FoamMesh m)
@@ -2542,19 +2583,55 @@ public class FoamSolver
     public int PendingAdds { get { return addQueue.Count; } }
 
     // Where a requested AddAt point actually seeds (see RequestAdd).
+    // A point inside bubble k seeds on k's own nearest border; if k has none (a free bubble), on k's
+    // surface nearest the point, so the new bubble attaches to the one pointed into. Before, the nearest
+    // border anywhere was used: in Alex's run 2026-10-18_121617 a point inside a free bubble 23 units from
+    // the cluster put the new bubble on the cluster.
     Vec3 PlaceAddPoint(Vec3 p, out string where)
     {
-        if (Pop.InsideBubble(Mesh, p) == 0) { where = "at the given point, outside the foam"; return p; }
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        int k = Pop.InsideBubble(Mesh, p);
+        if (k == 0)
+        {
+            double dn;
+            NearestFoamPoint(p, out dn);
+            where = "at the given point, outside the foam (" + dn.ToString("G3", ci) + " from the nearest bubble)";
+            return p;
+        }
         int best = -1; double bd = double.MaxValue;
         foreach (long e in BorderEdges)
+            foreach (int v in new[] { (int)(e >> 32), (int)(e & 0xffffffff) })
+            {
+                if (SlotOf(v, k) < 0) continue;
+                double d = (Mesh.V[v] - p).LengthSq;
+                if (d < bd) { bd = d; best = v; }
+            }
+        if (best >= 0)
         {
-            int v = (int)(e >> 32);
-            double d = (Mesh.V[v] - p).LengthSq;
-            if (d < bd) { bd = d; best = v; }
+            where = "on bubble " + k + "'s nearest border (" + Math.Sqrt(bd).ToString("G2", ci) + " from the point)";
+            return Mesh.V[best];
         }
-        if (best < 0) { where = "at the given point (no borders yet)"; return p; }
-        where = "nearest border to the given point (" + Math.Sqrt(bd).ToString("G2", System.Globalization.CultureInfo.InvariantCulture) + " away)";
+        foreach (var t in Mesh.T)
+        {
+            if (!((t.Neg == k && t.Pos == 0) || (t.Pos == k && t.Neg == 0))) continue;
+            foreach (int v in new[] { t.A, t.B, t.C })
+            {
+                double d = (Mesh.V[v] - p).LengthSq;
+                if (d < bd) { bd = d; best = v; }
+            }
+        }
+        if (best < 0) { where = "at the given point"; return p; }
+        where = "on bubble " + k + "'s surface nearest the point (it has no borders yet)";
         return Mesh.V[best];
+    }
+
+    // Nearest mesh vertex to p and its distance (shows where an AddAt point is relative to the foam).
+    public Vec3 NearestFoamPoint(Vec3 p, out double dist)
+    {
+        double bd = double.MaxValue; Vec3 best = p;
+        foreach (var q in Mesh.V) { double d = (q - p).LengthSq; if (d < bd) { bd = d; best = q; } }
+        dist = Math.Sqrt(bd);
+        return best;
     }
 
     // Interior nodes (4 bubbles, no outside air) first, then any node, then any border

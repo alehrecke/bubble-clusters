@@ -541,19 +541,55 @@ public class FoamSolver
     public int PendingAdds { get { return addQueue.Count; } }
 
     // Where a requested AddAt point actually seeds (see RequestAdd).
+    // A point inside bubble k seeds on k's own nearest border; if k has none (a free bubble), on k's
+    // surface nearest the point, so the new bubble attaches to the one pointed into. Before, the nearest
+    // border anywhere was used: in Alex's run 2026-10-18_121617 a point inside a free bubble 23 units from
+    // the cluster put the new bubble on the cluster.
     Vec3 PlaceAddPoint(Vec3 p, out string where)
     {
-        if (Pop.InsideBubble(Mesh, p) == 0) { where = "at the given point, outside the foam"; return p; }
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        int k = Pop.InsideBubble(Mesh, p);
+        if (k == 0)
+        {
+            double dn;
+            NearestFoamPoint(p, out dn);
+            where = "at the given point, outside the foam (" + dn.ToString("G3", ci) + " from the nearest bubble)";
+            return p;
+        }
         int best = -1; double bd = double.MaxValue;
         foreach (long e in BorderEdges)
+            foreach (int v in new[] { (int)(e >> 32), (int)(e & 0xffffffff) })
+            {
+                if (SlotOf(v, k) < 0) continue;
+                double d = (Mesh.V[v] - p).LengthSq;
+                if (d < bd) { bd = d; best = v; }
+            }
+        if (best >= 0)
         {
-            int v = (int)(e >> 32);
-            double d = (Mesh.V[v] - p).LengthSq;
-            if (d < bd) { bd = d; best = v; }
+            where = "on bubble " + k + "'s nearest border (" + Math.Sqrt(bd).ToString("G2", ci) + " from the point)";
+            return Mesh.V[best];
         }
-        if (best < 0) { where = "at the given point (no borders yet)"; return p; }
-        where = "nearest border to the given point (" + Math.Sqrt(bd).ToString("G2", System.Globalization.CultureInfo.InvariantCulture) + " away)";
+        foreach (var t in Mesh.T)
+        {
+            if (!((t.Neg == k && t.Pos == 0) || (t.Pos == k && t.Neg == 0))) continue;
+            foreach (int v in new[] { t.A, t.B, t.C })
+            {
+                double d = (Mesh.V[v] - p).LengthSq;
+                if (d < bd) { bd = d; best = v; }
+            }
+        }
+        if (best < 0) { where = "at the given point"; return p; }
+        where = "on bubble " + k + "'s surface nearest the point (it has no borders yet)";
         return Mesh.V[best];
+    }
+
+    // Nearest mesh vertex to p and its distance (shows where an AddAt point is relative to the foam).
+    public Vec3 NearestFoamPoint(Vec3 p, out double dist)
+    {
+        double bd = double.MaxValue; Vec3 best = p;
+        foreach (var q in Mesh.V) { double d = (q - p).LengthSq; if (d < bd) { bd = d; best = q; } }
+        dist = Math.Sqrt(bd);
+        return best;
     }
 
     // Interior nodes (4 bubbles, no outside air) first, then any node, then any border

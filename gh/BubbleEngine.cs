@@ -50,6 +50,7 @@ public static class Settings
     public static readonly int BorderThickness = 3;
     public static readonly Color NodeColor = Color.FromArgb(255, 60, 60);
     public static readonly int NodeSize = 6;
+    public static readonly Color AddAtColor = Color.FromArgb(40, 200, 255);   // AddAt marker, line to the foam, distance label
 
     // Guards against accidentally huge meshes (e.g. a radius typo).
     public static readonly int MaxTriangles = 60000;        // estimated; above this the build is refused
@@ -267,6 +268,7 @@ public class BubbleEngine
         // (every pop in run 2026-10-15_224201 was "at 0 0 0"), so check the wires.
         ApplyLive(run, Centers, Radii, Pull, Add, AddRadius, Pop, InputWired("PopAt") ? PopAt : Point3d.Unset,
                   InputWired("AddAt") ? AddAt : Point3d.Unset, Gather, InputWired("GatherTo") ? GatherTo : Point3d.Unset);
+        UpdateAddAtPreview(run, InputWired("AddAt") ? AddAt : Point3d.Unset);
 
         if (Run && !run.Settled)
         {
@@ -553,7 +555,13 @@ public class BubbleEngine
 
     public BoundingBox ClippingBox
     {
-        get { return current != null ? current.View.Box : BoundingBox.Empty; }
+        get
+        {
+            if (current == null) return BoundingBox.Empty;
+            var box = current.View.Box;
+            if (addAtShown.IsValid) box.Union(addAtShown);
+            return box;
+        }
     }
 
     public void DrawViewportMeshes(IGH_PreviewArgs args)
@@ -577,6 +585,39 @@ public class BubbleEngine
         foreach (var pl in v.Borders) args.Display.DrawPolyline(pl, Settings.BorderColor, Settings.BorderThickness);
         foreach (var p in v.Nodes)
             args.Display.DrawPoint(p, Rhino.Display.PointStyle.RoundSimple, Settings.NodeSize, Settings.NodeColor);
+        // The AddAt point, and when it's outside the foam a dotted line to the nearest bubble with the distance.
+        // A point that looks inside the cluster in a perspective view can be far off in depth (Alex's run
+        // 2026-10-18_121617: 23 units in front of the cluster).
+        if (addAtShown.IsValid)
+        {
+            args.Display.DrawPoint(addAtShown, Rhino.Display.PointStyle.X, 10, Settings.AddAtColor);
+            if (!addAtInside)
+            {
+                args.Display.DrawDottedLine(addAtShown, addAtNearest, Settings.AddAtColor);
+                args.Display.DrawDot(addAtShown, "AddAt: " + addAtDist.ToString("G3", CultureInfo.InvariantCulture) + " outside", Settings.AddAtColor, Color.White);
+            }
+        }
+    }
+
+    // AddAt preview state (updated in Solve; the inside test only when the point moves or the mesh changes).
+    Point3d addAtShown = Point3d.Unset, addAtNearest;
+    double addAtDist;
+    bool addAtInside;
+    Point3d addAtTestedAt = Point3d.Unset; int addAtTestedVersion = -1;
+
+    void UpdateAddAtPreview(BubbleRun run, Point3d addAt)
+    {
+        addAtShown = addAt;
+        if (!addAt.IsValid) return;
+        var s = run.Solver;
+        var p = new Vec3(addAt.X, addAt.Y, addAt.Z);
+        if (addAt != addAtTestedAt || s.TopologyVersion != addAtTestedVersion)
+        {
+            addAtInside = Pop.InsideBubble(s.Mesh, p) != 0;
+            addAtTestedAt = addAt; addAtTestedVersion = s.TopologyVersion;
+        }
+        var q = s.NearestFoamPoint(p, out addAtDist);
+        addAtNearest = new Point3d(q.X, q.Y, q.Z);
     }
 
     static List<Mesh> BubbleMeshes(FoamMesh m)
