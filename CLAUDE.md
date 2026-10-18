@@ -322,6 +322,20 @@ rebuild log line ("calibrate / mesh (chop, clean, slivers, remesh) / transfer / 
   replays: 0 refused). The host raft once ended with 7/8 landed and 1 resting on top (valid two-layer state, depends on drop details).
 - Mesher: per-node phase cache (chop barely changed: its cost is the polygon clipping, not function evaluation).
 Next speed steps: coarse mesh while interacting + refine when idle; mesh-host distance cache (hand-mesh rebuilds); chop/transfer allocations.
+**2026-10-18 (build d): rebuilds after huge bubbles.** Run 2026-10-18_125753 (fixture `vanish_gh`; first run on the new plugin):
+an r 10 bubble went in, then every rebuild was refused ("bubble 8 would vanish 0%"). Cause: a big bubble's fitted function is deep
+(min ~ -R/2) and its sphere runs through the cluster it's pressed against, so it beat small bubbles that weren't even neighbours
+(-3.06 vs -0.38 at an r 0.55 bubble's centre); calibration's small steps couldn't win that back.
+- `CalibrateVolumes` rescue: a bubble left with < 20% of its volume is first made to win at its snapshot centroid (by A r^2 / 2), at
+  most twice, then the regular steps fix volumes (`RebuildJob.Centroid`; `Rearranger.RescueSwallowed` switch). Deterministic repro:
+  rescue off → bubble 7 vanishes (worst 100%); on → OK, worst 2%. A "locality mask" (claims only near current territory) was tried
+  and REJECTED: 3 cells of dilation are wider than small bubbles, and the hard mask edge made meshes not watertight.
+- Calibration samples only spheres binned near each sample: up to 3 s → ~0.6 s mean with big bubbles.
+- A rebuilt mesh with an open edge or a 4-film edge (four phases tying on a grid line) is rebuilt on a shifted grid, up to 2 retries
+  (`MobiusMesher.Build(..., jitter)`).
+- Harness: `replaylive` is now deterministic (rebuild at once, applied `SimulatedDelay` = 60 steps later; `DELAY=0` for real async).
+  `failrepro <fixture> <steps> [kind]` replays to the first refused rebuild and re-runs that exact job (`RebuildJob.Retry`, `Fn0`;
+  `NORESCUE=1`). `rebuilddebug`, `budget`.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally

@@ -25,6 +25,7 @@ public class SolverSettings
     public double FitPrior = 0.01;   // weight of the sphere prior in the rebuild fit
     public bool InteriorFitBySize = true; // rebuild fit: interior bubbles take A from their size, not their pressure
     public bool AsyncRearrange = false; // build the new mesh on a background thread (GH: true, so Rhino doesn't freeze)
+    public int SimulatedDelay = 0;      // harness: with AsyncRearrange, build at once but apply exactly this many steps later (deterministic replays)
     public double RebuildGridFactor = 1.5; // rebuild grid = edge x this (1.5: ~35% faster than 1, same quality; 2 changed topology)
     public int RebuildRemeshIters = 2;
     public bool TransferShape = true; // after a rebuild, put the old film shape back outside the event zone (ShapeTransfer)
@@ -516,6 +517,7 @@ public class FoamSolver
     Rearranger.RebuildJob pendingJob;
     System.Threading.Tasks.Task pendingTask;
     public bool RebuildPending { get { return pendingJob != null; } }
+    int pendingReadyStep;
 
     // ---- adding bubbles ----
     class AddRequest { public double Radius; public bool HasAt; public Vec3 At; }
@@ -657,7 +659,8 @@ public class FoamSolver
         if (S.AsyncRearrange)
         {
             pendingJob = job;
-            pendingTask = System.Threading.Tasks.Task.Run(() => job.Run());
+            if (S.SimulatedDelay > 0) { job.Run(); pendingTask = System.Threading.Tasks.Task.FromResult(0); pendingReadyStep = Steps + S.SimulatedDelay; }
+            else pendingTask = System.Threading.Tasks.Task.Run(() => job.Run());
         }
         else
         {
@@ -726,7 +729,8 @@ public class FoamSolver
         if (S.AsyncRearrange)
         {
             pendingJob = job;
-            pendingTask = System.Threading.Tasks.Task.Run(() => job.Run());
+            if (S.SimulatedDelay > 0) { job.Run(); pendingTask = System.Threading.Tasks.Task.FromResult(0); pendingReadyStep = Steps + S.SimulatedDelay; }
+            else pendingTask = System.Threading.Tasks.Task.Run(() => job.Run());
         }
         else
         {
@@ -738,7 +742,7 @@ public class FoamSolver
     // Apply a finished background rebuild (called at the start of each step).
     void PollRebuild()
     {
-        if (pendingJob == null || !pendingTask.IsCompleted) return;
+        if (pendingJob == null || !pendingTask.IsCompleted || Steps < pendingReadyStep) return;
         var job = pendingJob;
         pendingJob = null; pendingTask = null;
         Finish(job);
@@ -750,6 +754,7 @@ public class FoamSolver
         string when = S.AsyncRearrange ? " (background, steps " + job.Step + "-" + Steps + ")" : "";
         if (job.Fail != null)
         {
+            LastFailedJob = job;
             string retry = "";
             if (job.AddRadius > 0)
             {
@@ -809,10 +814,12 @@ public class FoamSolver
                          nodesBefore + "->" + Nodes.Count + ", border edges " + bordersBefore + "->" + BorderEdges.Count +
                          "; smallest volume kept vs snapshot " + kept.ToString("P0", System.Globalization.CultureInfo.InvariantCulture) +
                          (reinflate.Count > 0 ? "; re-inflating bubble " + string.Join(", ", reinflate) : "") +
-                         (job.Transfer != null ? "; " + job.Transfer : "") + "; " + job.Timing);
+                         (job.Transfer != null ? "; " + job.Transfer : "") +
+                         (job.Calibration != null && job.Calibration.Contains("rescued") ? "; " + job.Calibration : "") + "; " + job.Timing);
     }
 
     public int Added;
+    public Rearranger.RebuildJob LastFailedJob;   // the most recent refused rebuild (diagnostics: harness failrepro)
 
     static double[] Grow(double[] a, int k, double value)
     {

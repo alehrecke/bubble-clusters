@@ -357,6 +357,8 @@ public static class Program
         }
         if (cmd == "host") { HostTests(args.Length > 1 ? args[1] : "all"); return 0; }
         if (cmd == "big") { BigTests(args.Length > 1 ? args[1] : "all"); return 0; }
+        if (cmd == "rebuilddebug") { RebuildDebug(args[1], int.Parse(args[2]), int.Parse(args[3])); return 0; }
+        if (cmd == "failrepro") { FailRepro(args[1], int.Parse(args[2]), args.Length > 3 ? args[3] : "any"); return 0; }
         if (cmd == "budget")
         {
             // Triangle budget of a recorded run's cluster with the current meshing, and what an add would cost.
@@ -600,7 +602,7 @@ public static class Program
     static void ReplayLive(string dir, int steps)
     {
         List<double> r;
-        var s = LoadFixture(dir, out r, new SolverSettings { AsyncRearrange = true });
+        var s = LoadFixture(dir, out r, new SolverSettings { AsyncRearrange = true, SimulatedDelay = int.Parse(Environment.GetEnvironmentVariable("DELAY") ?? "60") });
         var adds = new SortedDictionary<int, List<double>>();
         var addAts = new Dictionary<int, List<Vec3>>();              // parallel to adds; NaN X = no point
         var gathers = new SortedDictionary<int, double>();
@@ -681,6 +683,7 @@ public static class Program
                 foreach (var kv in pv.Value) if (kv.Key < s.PullTarget.Length) s.PullTarget[kv.Key] = kv.Value;
             }
             s.Step();
+            if (ReplayStop != null && ReplayStop(s)) { foreach (var l in s.RearrangeLog) Console.WriteLine("   " + l); s.RearrangeLog.Clear(); break; }
             foreach (var l in s.RearrangeLog)
             {
                 if (l.Contains("rebuilt")) rebuilds++;
@@ -696,6 +699,83 @@ public static class Program
         }
         var vol = s.Mesh.Volumes();
         Console.WriteLine("  volume/desired: " + string.Join(" ", Enumerable.Range(1, s.Mesh.BubbleCount).Select(k => (vol[k] / s.DesiredVolume[k]).ToString("F2", CI))));
+        LastReplay = s;
+    }
+
+    static FoamSolver LastReplay;
+    static Func<FoamSolver, bool> ReplayStop;
+
+    // Replay until the first refused rebuild (optionally of a given kind), then re-run exactly that rebuild
+    // synchronously, with the swallowed-bubble rescue off and on, and describe the failure.
+    static void FailRepro(string dir, int steps, string kind)
+    {
+        ReplayStop = sv => sv.LastFailedJob != null && (kind == "any" || sv.LastFailedJob.Fail.Contains(kind));
+        // NORESCUE=1: replay with the swallowed-bubble rescue off (to reach the original failure).
+        Rearranger.RescueSwallowed = Environment.GetEnvironmentVariable("NORESCUE") == null;
+        ReplayLive(dir, steps);
+        ReplayStop = null;
+        var s = LastReplay;
+        var job = s.LastFailedJob;
+        if (job == null) { Console.WriteLine("no refused rebuild in " + steps + " steps"); return; }
+        Console.WriteLine("\nrefused at step " + job.Step + ": " + job.What + "\n  -> " + job.Fail + "\n  " + job.Calibration);
+        foreach (bool rescue in new[] { false, true })
+        {
+            Rearranger.RescueSwallowed = rescue;
+            var j = job.Retry();
+            j.Run();
+            Console.WriteLine(string.Format(CI, "\nrerun, rescue {0}: {1}; {2}; {3}", rescue ? "on" : "off", j.Fail ?? "OK", j.Calibration, j.Timing));
+            var m = j.Candidate;
+            if (m == null) continue;
+            var v = m.Volumes();
+            Console.WriteLine("  volume vs snapshot: " + string.Join(" ", Enumerable.Range(1, Math.Min(m.BubbleCount, j.CurrentVolume.Length - 1)).Select(k => k + ":" + (v[k] / j.CurrentVolume[k]).ToString("F2", CI))));
+            int shown = 0;
+            foreach (var kv in m.EdgeTris())
+            {
+                if (kv.Value.Count != 1 && kv.Value.Count < 4) continue;
+                int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
+                Vec3 mid = (m.V[a] + m.V[b]) * 0.5;
+                Console.WriteLine(string.Format(CI, "  {0} edge at ({1:F2}, {2:F2}, {3:F2}){4}: films {5}", kv.Value.Count == 1 ? "open" : "4+",
+                    mid.X, mid.Y, mid.Z, s.Host != null ? string.Format(CI, " height {0:G3}", s.Host.Height(mid)) : "",
+                    string.Join(", ", kv.Value.Select(ti => m.T[ti].Neg + "|" + m.T[ti].Pos))));
+                if (++shown >= 6) break;
+            }
+        }
+        Rearranger.RescueSwallowed = true;
+    }
+
+    // Replay a run to `steps`, then run one rebuild by hand and report what happens to bubble k at each stage.
+    static void RebuildDebug(string dir, int steps, int k)
+    {
+        ReplayLive(dir, steps);
+        var s = LastReplay;
+        while (s.RebuildPending) s.Step();
+        var m = s.Mesh;
+        var vol = m.Volumes();
+        double outer = 0, foot = 0; var walls = new Dictionary<int, double>();
+        foreach (var t in m.T)
+        {
+            if (t.Neg != k && t.Pos != k) continue;
+            int o = t.Neg == k ? t.Pos : t.Neg;
+            double a = m.TriArea(t);
+            if (o == 0) outer += a; else if (o == FoamMesh.Solid) foot += a; else { double w; walls.TryGetValue(o, out w); walls[o] = w + a; }
+        }
+        Console.WriteLine(string.Format(CI, "\nbubble {0}: volume {1:G4} (desired {2:G4}), pressure {3:G4}; outer film {4:G3}, footprint {5:G3}, walls: {6}",
+            k, vol[k], s.DesiredVolume[k], s.Pressure[k], outer, foot, string.Join(", ", walls.Select(kv => kv.Key + ":" + kv.Value.ToString("G3", CI)))));
+        Console.WriteLine(string.Format(CI, "edge {0:G3}, rebuild grid {1:G3}, region scale {2:G3}", s.TargetEdge, s.TargetEdge * s.S.RebuildGridFactor, s.RegionScale[k]));
+        var job = Rearranger.Prepare(s, "debug");
+        var fn = job.Fn;
+        var cen = s.Centroids()[k];
+        Console.WriteLine(string.Format(CI, "fit: A {0:G4} (sphere radius {1:G4}), f_k at centroid {2:G4}; rival f at centroid: {3}",
+            fn.A[k - 1], 1 / (2 * fn.A[k - 1]), fn.F(k, cen),
+            string.Join(", ", Enumerable.Range(1, fn.Count).Where(j => j != k && fn.F(j, cen) < 0).Select(j => j + ":" + fn.F(j, cen).ToString("G3", CI)))));
+        job.Run();
+        Console.WriteLine("calibration: " + job.Calibration + "; fail: " + (job.Fail ?? "none") + "; " + job.Timing);
+        Console.WriteLine(string.Format(CI, "after calibration: f_k at centroid {0:G4}, A {1:G4}", fn.F(k, cen), fn.A[k - 1]));
+        if (job.Candidate != null)
+        {
+            var v2 = job.Candidate.Volumes();
+            Console.WriteLine(string.Format(CI, "rebuilt volume of {0}: {1:G4}", k, v2[k]));
+        }
     }
 
     // Which bubbles' functions win on the faces of the rebuild box (a region leaking out of the

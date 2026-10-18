@@ -104,7 +104,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18c";
+    public const string Build = "2026-10-18d";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -1243,7 +1243,7 @@ public static class MobiusMesher
     // h is the target edge length. The grid is sampled at h * gridFactor: 1 gives the
     // cleanest start, and 1.5 is ~2x cheaper (the remesher then refines to h). remeshIters = cleanup rounds.
     public static FoamMesh Build(BubbleFunctions fn, Vec3 lo, Vec3 hi, double h, out string info, double[] regionScale = null,
-                                 double gridFactor = 1, int remeshIters = 3)
+                                 double gridFactor = 1, int remeshIters = 3, int jitter = 0)
     {
         double L = h;
         h = h * gridFactor;
@@ -1256,6 +1256,9 @@ public static class MobiusMesher
         hi = hi + new Vec3(2 * h, 2 * h, 2 * h);
         // Offset the grid by an irrational fraction of h so nodes rarely sit exactly on symmetric interfaces.
         lo = lo - new Vec3(0.1234567 * h, 0.2345678 * h, 0.3456789 * h);
+        // A retry shifts the grid: phases that tie exactly along a grid line give a 4-film edge (two
+        // films crossing), and a different alignment breaks the tie (run 2026-10-18_125753).
+        if (jitter > 0) lo = lo - new Vec3(0.3713 * jitter * h, 0.2179 * jitter * h, 0.1291 * jitter * h);
         int nx = (int)Math.Ceiling((hi.X - lo.X) / h) + 1;
         int ny = (int)Math.Ceiling((hi.Y - lo.Y) / h) + 1;
         int nz = (int)Math.Ceiling((hi.Z - lo.Z) / h) + 1;
@@ -2072,6 +2075,7 @@ public class SolverSettings
     public double FitPrior = 0.01;   // weight of the sphere prior in the rebuild fit
     public bool InteriorFitBySize = true; // rebuild fit: interior bubbles take A from their size, not their pressure
     public bool AsyncRearrange = false; // build the new mesh on a background thread (GH: true, so Rhino doesn't freeze)
+    public int SimulatedDelay = 0;      // harness: with AsyncRearrange, build at once but apply exactly this many steps later (deterministic replays)
     public double RebuildGridFactor = 1.5; // rebuild grid = edge x this (1.5: ~35% faster than 1, same quality; 2 changed topology)
     public int RebuildRemeshIters = 2;
     public bool TransferShape = true; // after a rebuild, put the old film shape back outside the event zone (ShapeTransfer)
@@ -2563,6 +2567,7 @@ public class FoamSolver
     Rearranger.RebuildJob pendingJob;
     System.Threading.Tasks.Task pendingTask;
     public bool RebuildPending { get { return pendingJob != null; } }
+    int pendingReadyStep;
 
     // ---- adding bubbles ----
     class AddRequest { public double Radius; public bool HasAt; public Vec3 At; }
@@ -2704,7 +2709,8 @@ public class FoamSolver
         if (S.AsyncRearrange)
         {
             pendingJob = job;
-            pendingTask = System.Threading.Tasks.Task.Run(() => job.Run());
+            if (S.SimulatedDelay > 0) { job.Run(); pendingTask = System.Threading.Tasks.Task.FromResult(0); pendingReadyStep = Steps + S.SimulatedDelay; }
+            else pendingTask = System.Threading.Tasks.Task.Run(() => job.Run());
         }
         else
         {
@@ -2773,7 +2779,8 @@ public class FoamSolver
         if (S.AsyncRearrange)
         {
             pendingJob = job;
-            pendingTask = System.Threading.Tasks.Task.Run(() => job.Run());
+            if (S.SimulatedDelay > 0) { job.Run(); pendingTask = System.Threading.Tasks.Task.FromResult(0); pendingReadyStep = Steps + S.SimulatedDelay; }
+            else pendingTask = System.Threading.Tasks.Task.Run(() => job.Run());
         }
         else
         {
@@ -2785,7 +2792,7 @@ public class FoamSolver
     // Apply a finished background rebuild (called at the start of each step).
     void PollRebuild()
     {
-        if (pendingJob == null || !pendingTask.IsCompleted) return;
+        if (pendingJob == null || !pendingTask.IsCompleted || Steps < pendingReadyStep) return;
         var job = pendingJob;
         pendingJob = null; pendingTask = null;
         Finish(job);
@@ -2797,6 +2804,7 @@ public class FoamSolver
         string when = S.AsyncRearrange ? " (background, steps " + job.Step + "-" + Steps + ")" : "";
         if (job.Fail != null)
         {
+            LastFailedJob = job;
             string retry = "";
             if (job.AddRadius > 0)
             {
@@ -2856,10 +2864,12 @@ public class FoamSolver
                          nodesBefore + "->" + Nodes.Count + ", border edges " + bordersBefore + "->" + BorderEdges.Count +
                          "; smallest volume kept vs snapshot " + kept.ToString("P0", System.Globalization.CultureInfo.InvariantCulture) +
                          (reinflate.Count > 0 ? "; re-inflating bubble " + string.Join(", ", reinflate) : "") +
-                         (job.Transfer != null ? "; " + job.Transfer : "") + "; " + job.Timing);
+                         (job.Transfer != null ? "; " + job.Transfer : "") +
+                         (job.Calibration != null && job.Calibration.Contains("rescued") ? "; " + job.Calibration : "") + "; " + job.Timing);
     }
 
     public int Added;
+    public Rearranger.RebuildJob LastFailedJob;   // the most recent refused rebuild (diagnostics: harness failrepro)
 
     static double[] Grow(double[] a, int k, double value)
     {
@@ -3583,6 +3593,13 @@ public class BubbleFunctions
         return f;
     }
 
+    public BubbleFunctions Clone()
+    {
+        var c = new BubbleFunctions(Count) { Host = Host };
+        Array.Copy(A, c.A, Count); Array.Copy(B, c.B, Count); Array.Copy(D, c.D, Count);
+        return c;
+    }
+
     // f_k(x) for bubble k (1-based).
     public double F(int k, Vec3 x)
     {
@@ -4250,12 +4267,26 @@ public static class Rearranger
         public List<int> Grow = new List<int>();   // bubbles enlarged by ~one grid cell before calibration (contacts)
         public List<KeyValuePair<int, Vec3>> Shift = new List<KeyValuePair<int, Vec3>>(); // bubbles moved before calibration (landing)
         public FoamMesh Old;                 // snapshot for ShapeTransfer (null = off)
+        public FoamMesh Snap;                // snapshot of the mesh at Prepare
+        public BubbleFunctions Fn0;          // the functions before Run changed them (to re-run a refused rebuild offline)
+        public Vec3[] Centroid;              // bubble centroids at Prepare (calibration rescues swallowed bubbles there)
         public List<Vec3> ZoneAt = new List<Vec3>();
         public List<double> ZoneR = new List<double>();
         public ShapeTransfer.Stats Transfer;   // bubbles enlarged by ~one grid cell before calibration (contacts)
 
+        // A fresh copy of this job (functions as prepared), to run again: harness `failrepro`.
+        public RebuildJob Retry()
+        {
+            var j = (RebuildJob)MemberwiseClone();
+            j.Fn = (Fn0 ?? Fn).Clone();
+            j.Fn0 = null; j.Mesh = null; j.Candidate = null; j.Fail = null; j.Info = null; j.Calibration = null; j.Transfer = null;
+            j.Grow = new List<int>(Grow); j.Shift = new List<KeyValuePair<int, Vec3>>(Shift);
+            return j;
+        }
+
         public void Run()
         {
+            if (Fn0 == null) Fn0 = Fn.Clone();
             var sw = System.Diagnostics.Stopwatch.StartNew();
             long tCalV = 0, tBuildV = 0, tTransferV = 0;
             var stageV = new System.Text.StringBuilder();
@@ -4285,7 +4316,7 @@ public static class Rearranger
                     double r = Math.Pow(3 * Math.Max(CurrentVolume[k], 1e-12) / (4 * Math.PI), 1.0 / 3);
                     Fn.D[k - 1] -= H * GridFactor * Math.Max(0.2, 2 * Fn.A[k - 1] * r);
                 }
-                Calibration = CalibrateVolumes(Fn, Lo, Hi, H * GridFactor / 1.5, CurrentVolume, existing);
+                Calibration = CalibrateVolumes(Fn, Lo, Hi, H * GridFactor / 1.5, CurrentVolume, existing, Centroid);
                 tCalV = sw.ElapsedMilliseconds;
                 if (AddRadius > 0) PlaceSeed(Fn, AddAt, AddR0);
                 string info;
@@ -4293,6 +4324,14 @@ public static class Rearranger
                 long tStage = sw.ElapsedMilliseconds;
                 MobiusMesher.StageTimer = name => { long now = sw.ElapsedMilliseconds; stage.Append(" ").Append(name).Append(" ").Append(now - tStage); tStage = now; };
                 var mesh = MobiusMesher.Build(Fn, Lo, Hi, H, out info, Scale, GridFactor, RemeshIters);
+                for (int attempt = 1; attempt <= 2; attempt++)
+                {
+                    var hb = Remesher.EdgeHistogram(mesh);
+                    if (hb[1] == 0 && hb[4] + hb[5] == 0) break;
+                    info += "; retried on a shifted grid (" + hb[1] + " open, " + (hb[4] + hb[5]) + " 4+ film edges)";
+                    string info2;
+                    mesh = MobiusMesher.Build(Fn, Lo, Hi, H, out info2, Scale, GridFactor, RemeshIters, attempt);
+                }
                 MobiusMesher.StageTimer = null;
                 tBuildV = sw.ElapsedMilliseconds;
                 Info = info;
@@ -4371,8 +4410,13 @@ public static class Rearranger
     // Iterated, damped, each shift capped at half the bubble radius.
     // skip: a bubble to leave alone (a seed for an add), or -1.
     // count: only the first `count` bubbles take part (a seed beyond them is ignored).
-    public static string CalibrateVolumes(BubbleFunctions fn, Vec3 lo, Vec3 hi, double cell, double[] target, int count)
+    public static bool RescueSwallowed = true;   // harness switch for A/B
+
+    public static string CalibrateVolumes(BubbleFunctions fn, Vec3 lo, Vec3 hi, double cell, double[] target, int count, Vec3[] centroid = null)
     {
+        if (!RescueSwallowed) centroid = null;
+        var rescued = new int[count + 1];
+        var rescueNote = new List<string>();
         int n = count, skip = -1;
         int nx = Math.Max(2, (int)Math.Ceiling((hi.X - lo.X) / cell)), ny = Math.Max(2, (int)Math.Ceiling((hi.Y - lo.Y) / cell)), nz = Math.Max(2, (int)Math.Ceiling((hi.Z - lo.Z) / cell));
         double cv = cell * cell * cell;
@@ -4388,18 +4432,43 @@ public static class Rearranger
                         solid[(k * ny + j) * nx + i] = fn.Host.Height(new Vec3(lo.X + (i + 0.5) * cell, lo.Y + (j + 0.5) * cell, lo.Z + (k + 0.5) * cell)) < 0;
         }
         double worstBefore = 0, worstAfter = 0;
+        // Spatial bins of the bubbles' spheres (f_b < 0 only inside the sphere centre -B/2A, radius^2 = |c|^2 - D/A),
+        // so a sample is tested only against the few spheres that can contain it. Testing every bubble at every
+        // sample of the whole box took up to 3 s per rebuild once an r 10 bubble made the box large (run 2026-10-18_125753).
+        double ext = Math.Max(hi.X - lo.X, Math.Max(hi.Y - lo.Y, hi.Z - lo.Z));
+        double bin = Math.Max(4 * cell, ext / 48);
+        int bx = Math.Max(1, (int)Math.Ceiling((hi.X - lo.X) / bin)), by = Math.Max(1, (int)Math.Ceiling((hi.Y - lo.Y) / bin)), bz = Math.Max(1, (int)Math.Ceiling((hi.Z - lo.Z) / bin));
+        var bins = new List<int>[bx * by * bz];
         for (int it = 0; it < 16; it++)
         {
             Array.Clear(vol, 0, vol.Length);
+            for (int q = 0; q < bins.Length; q++) { if (bins[q] == null) bins[q] = new List<int>(4); else bins[q].Clear(); }
+            for (int b = 0; b < n; b++)
+            {
+                if (!(fn.A[b] > 0)) continue;
+                Vec3 c = fn.B[b] * (-0.5 / fn.A[b]);
+                double rr = c.LengthSq - fn.D[b] / fn.A[b];
+                if (!(rr > 0)) continue;
+                double rad = Math.Sqrt(rr);
+                int i0 = Math.Max(0, (int)Math.Floor((c.X - rad - lo.X) / bin)), i1 = Math.Min(bx - 1, (int)Math.Floor((c.X + rad - lo.X) / bin));
+                int j0 = Math.Max(0, (int)Math.Floor((c.Y - rad - lo.Y) / bin)), j1 = Math.Min(by - 1, (int)Math.Floor((c.Y + rad - lo.Y) / bin));
+                int k0 = Math.Max(0, (int)Math.Floor((c.Z - rad - lo.Z) / bin)), k1 = Math.Min(bz - 1, (int)Math.Floor((c.Z + rad - lo.Z) / bin));
+                for (int kk = k0; kk <= k1; kk++)
+                    for (int jj = j0; jj <= j1; jj++)
+                        for (int ii = i0; ii <= i1; ii++) bins[(kk * by + jj) * bx + ii].Add(b);
+            }
             for (int k = 0; k < nz; k++)
                 for (int j = 0; j < ny; j++)
                     for (int i = 0; i < nx; i++)
                     {
                         if (solid != null && solid[(k * ny + j) * nx + i]) continue;
                         double x = lo.X + (i + 0.5) * cell, y = lo.Y + (j + 0.5) * cell, z = lo.Z + (k + 0.5) * cell;
+                        int bi = Math.Min(bx - 1, (int)((x - lo.X) / bin)), bj = Math.Min(by - 1, (int)((y - lo.Y) / bin)), bk = Math.Min(bz - 1, (int)((z - lo.Z) / bin));
+                        var cand = bins[(bk * by + bj) * bx + bi];
+                        if (cand.Count == 0) continue;   // outside every sphere: outside air
                         double r2 = x * x + y * y + z * z;
                         int best = 0; double bf = 0; // outside: f = 0, bubble wins where f < its rivals
-                        for (int b = 0; b < n; b++)
+                        foreach (int b in cand)
                         {
                             double f = fn.A[b] * r2 + fn.B[b].X * x + fn.B[b].Y * y + fn.B[b].Z * z + fn.D[b];
                             if (f < bf) { bf = f; best = b + 1; }
@@ -4416,6 +4485,26 @@ public static class Rearranger
             if (it == 0) worstBefore = worst;
             worstAfter = worst;
             if (worst < 0.03) break;
+            // Rescue: a bubble the fit left with (almost) no space is usually swallowed by a big neighbour whose
+            // function is far deeper at that spot (r 7.8 bubble: -3.06 at the centre of an r 0.55 bubble scoring
+            // -0.38; run 2026-10-18_125753). The regular step below is far too small to win that back, so the bubble
+            // is first made to win at its own current centroid, by a margin worth about half its radius; the
+            // regular steps then fix its volume.
+            bool anyRescue = false;
+            if (centroid != null)
+                for (int b = 1; b <= n; b++)
+                {
+                    if (b >= target.Length || !(target[b] > 0) || b >= centroid.Length || rescued[b] >= 2) continue;
+                    if (vol[b] >= 0.2 * target[b]) continue;
+                    Vec3 c = centroid[b];
+                    double rival = 0;   // the outside air
+                    for (int j = 1; j <= n; j++) if (j != b && fn.A[j - 1] > 0) rival = Math.Min(rival, fn.F(j, c));
+                    double r = Math.Pow(3 * target[b] / (4 * Math.PI), 1.0 / 3);
+                    double want = rival - fn.A[b - 1] * r * r * 0.5;
+                    double fb = fn.F(b, c);
+                    if (fb > want) { fn.D[b - 1] += want - fb; anyRescue = true; rescued[b]++; rescueNote.Add(b.ToString()); }
+                }
+            if (anyRescue) continue;
             for (int b = 1; b <= n; b++)
             {
                 if (b == skip || b >= target.Length || !(target[b] > 0)) continue;
@@ -4432,7 +4521,8 @@ public static class Rearranger
                 fn.D[b - 1] += dist * gradScale;
             }
         }
-        return string.Format(CultureInfo.InvariantCulture, "volume calibration: worst error {0:P0} -> {1:P0}", worstBefore, worstAfter);
+        return string.Format(CultureInfo.InvariantCulture, "volume calibration: worst error {0:P0} -> {1:P0}", worstBefore, worstAfter) +
+               (rescueNote.Count > 0 ? " (rescued swallowed bubble " + string.Join(", ", rescueNote.Distinct()) + ")" : "");
     }
 
     // The last function becomes a sphere of radius r0 at `at`, shifted to beat every other
@@ -4452,6 +4542,13 @@ public static class Rearranger
 
     public static RebuildJob Prepare(FoamSolver s, string what, List<Event> events = null)
     {
+        var job = PrepareCore(s, what, events);
+        if (s.S.TransferShape) job.Old = job.Snap;
+        return job;
+    }
+
+    static RebuildJob PrepareCore(FoamSolver s, string what, List<Event> events)
+    {
         var m = s.Mesh;
         Vec3 lo = new Vec3(double.MaxValue, double.MaxValue, double.MaxValue);
         Vec3 hi = new Vec3(double.MinValue, double.MinValue, double.MinValue);
@@ -4470,7 +4567,8 @@ public static class Rearranger
             Scale = s.RegionScale == null ? null : (double[])s.RegionScale.Clone(),
             CurrentVolume = m.Volumes(),
             What = what, Step = s.Steps,
-            Old = s.S.TransferShape ? m.Clone() : null,
+            Snap = m.Clone(),
+            Centroid = s.Centroids(),
             ZoneAt = events == null ? new List<Vec3>() : events.Select(e => e.At).ToList(),
             ZoneR = events == null ? new List<double>() : events.Select(e => e.Radius).ToList(),
         };

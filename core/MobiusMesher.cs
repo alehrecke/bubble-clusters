@@ -87,7 +87,7 @@ public static class MobiusMesher
     // h is the target edge length. The grid is sampled at h * gridFactor: 1 gives the
     // cleanest start, and 1.5 is ~2x cheaper (the remesher then refines to h). remeshIters = cleanup rounds.
     public static FoamMesh Build(BubbleFunctions fn, Vec3 lo, Vec3 hi, double h, out string info, double[] regionScale = null,
-                                 double gridFactor = 1, int remeshIters = 3)
+                                 double gridFactor = 1, int remeshIters = 3, int jitter = 0)
     {
         double L = h;
         h = h * gridFactor;
@@ -100,6 +100,9 @@ public static class MobiusMesher
         hi = hi + new Vec3(2 * h, 2 * h, 2 * h);
         // Offset the grid by an irrational fraction of h so nodes rarely sit exactly on symmetric interfaces.
         lo = lo - new Vec3(0.1234567 * h, 0.2345678 * h, 0.3456789 * h);
+        // A retry shifts the grid: phases that tie exactly along a grid line give a 4-film edge (two
+        // films crossing), and a different alignment breaks the tie (run 2026-10-18_125753).
+        if (jitter > 0) lo = lo - new Vec3(0.3713 * jitter * h, 0.2179 * jitter * h, 0.1291 * jitter * h);
         int nx = (int)Math.Ceiling((hi.X - lo.X) / h) + 1;
         int ny = (int)Math.Ceiling((hi.Y - lo.Y) / h) + 1;
         int nz = (int)Math.Ceiling((hi.Z - lo.Z) / h) + 1;

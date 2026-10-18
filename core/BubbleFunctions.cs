@@ -40,6 +40,13 @@ public class BubbleFunctions
         return f;
     }
 
+    public BubbleFunctions Clone()
+    {
+        var c = new BubbleFunctions(Count) { Host = Host };
+        Array.Copy(A, c.A, Count); Array.Copy(B, c.B, Count); Array.Copy(D, c.D, Count);
+        return c;
+    }
+
     // f_k(x) for bubble k (1-based).
     public double F(int k, Vec3 x)
     {
