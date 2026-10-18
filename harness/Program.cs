@@ -359,6 +359,31 @@ public static class Program
         if (cmd == "big") { BigTests(args.Length > 1 ? args[1] : "all"); return 0; }
         if (cmd == "rebuilddebug") { RebuildDebug(args[1], int.Parse(args[2]), int.Parse(args[3])); return 0; }
         if (cmd == "failrepro") { FailRepro(args[1], int.Parse(args[2]), args.Length > 3 ? args[3] : "any"); return 0; }
+        if (cmd == "clean")
+        {
+            // Border cleanup on a recorded mesh: clean <mesh.obj> <cellSize> [iterations] [arcTol]
+            var m = FoamAnalysis.FromObj(File.ReadAllText(args[1]));
+            double cell = double.Parse(args[2], CI);
+            var set = new BorderCleanSettings { Iterations = args.Length > 3 ? int.Parse(args[3]) : 12, ArcTolerance = args.Length > 4 ? double.Parse(args[4], CI) : 0.5 };
+            var sw = Stopwatch.StartNew();
+            var cb = BorderClean.Clean(m, cell, set);
+            Console.WriteLine(string.Format(CI, "{0} borders in {1} ms; arcs {2} ({3:P0}); host outlines {4}", cb.Count, sw.ElapsedMilliseconds,
+                cb.Count(b => b.IsArc), cb.Count(b => b.IsArc) / (double)Math.Max(1, cb.Count), cb.Count(b => b.OnHost)));
+            Console.WriteLine(string.Format(CI, "mean turning per vertex: raw {0:F2} deg -> clean {1:F2} deg", cb.Average(b => b.RawTurning), cb.Average(b => b.CleanTurning)));
+            var devs = cb.Where(b => !double.IsNaN(b.ArcDeviation)).Select(b => b.ArcDeviation / cell).OrderBy(x => x).ToList();
+            if (devs.Count > 0) Console.WriteLine(string.Format(CI, "arc deviation / CellSize: median {0:F2}, 90% {1:F2}, max {2:F2}", devs[devs.Count / 2], devs[(int)(devs.Count * 0.9)], devs[devs.Count - 1]));
+            // Node continuity: all borders ending at a node end on the same point.
+            var ends = new Dictionary<int, List<Vec3>>();
+            foreach (var b in cb.Where(b => !b.Closed))
+            {
+                if (!ends.ContainsKey(b.StartNode)) ends[b.StartNode] = new List<Vec3>();
+                if (!ends.ContainsKey(b.EndNode)) ends[b.EndNode] = new List<Vec3>();
+                ends[b.StartNode].Add(b.Points[0]); ends[b.EndNode].Add(b.Points[b.Points.Count - 1]);
+            }
+            double gap = ends.Values.Max(l => l.Max(q => (q - l[0]).Length));
+            Console.WriteLine(string.Format(CI, "nodes {0}; largest gap between border ends at a node {1:G2}", ends.Count, gap));
+            return 0;
+        }
         if (cmd == "stream")
         {
             // Stream bed: 3 domes on a plane, bubbles spawned upstream drift along +x and collect.

@@ -126,6 +126,17 @@ current foam and ask the solver for changes. Your own Add / AddAt / Pop inputs k
   it uses the handle through `dynamic` (no plugin reference needed). Members are listed at the top of that file and on
   `FoamHandle` in `gh/BubbleEngine.cs`. Batches (`foam.AddBatch`) go in with one rebuild; keep seeds a couple of CellSizes apart.
 
+## 3e. Clean borders for fabrication (Border Curves)
+**Border Curves** (Pneuhaus → Bubbles) takes the solver's `Foam` output and gives fabrication-ready borders:
+- `Curves`: each border between two nodes, smoothed and, where it's within `ArcTol` x CellSize of a circular arc, replaced by that
+  exact arc (closed loops by exact circles). Almost all borders qualify: a border is where two near-spherical films meet. The rest
+  are smooth degree-3 curves. Good input for MultiPipe.
+- `Polylines`: the same borders, evenly resampled (`Spacing`, default CellSize; arcs get at least one point per 10 degrees). For
+  mesh thickeners.
+- Every border ends exactly on its node points (`Nodes`), so the network is connected.
+- `IsArc`, `Outer` (touches the outside air: the visible borders, e.g. for pen plots). `Host` toggles the footprint outlines.
+- Clean at the end: while the foam is still relaxing (Info says so), borders keep moving slightly.
+
 ## 4. Preview
 The component draws its own preview:
 - **Outer caps:** see-through pale blue.

@@ -367,6 +367,12 @@ popped in Finish) instead of refusing; Border Detail floors radii at 1.5 rebuild
 local; both generators pause at `Settings.MaxTriangles` (handle: Triangles, TriangleLimit, EstimateTriangles). Replay of detail_gh:
 15 → 3 refusals (crowded tiny bubbles: calibration can't place all 11 swallowed ones; more iterations didn't help; foam recovers).
 `Rearranger.CalibrateIterations` (16) and failrepro `CALIT=16,32,48` for experiments.
+**2026-10-18 (build h): Border Curves (Phase 6 start).** `core/BorderClean.cs`: per border chain, Taubin smoothing (ends fixed), arc
+test (circle through both nodes + arc-length midpoint; closed: three points a third apart), exact arc if within ArcTolerance x CellSize,
+else resampled smooth chain; arcs get <= 10 deg per segment. Plugin `BorderCurvesComponent`: Curves (ArcCurve / interpolated NURBS),
+Polylines, Nodes, IsArc, Outer. Harness `clean <mesh.obj> <cell> [iters] [arcTol]`. Measured on run 190700 (572 borders, CellSize 0.3):
+564 (99%) within tolerance of an exact arc, median deviation 0.02 x CellSize (raw, unsmoothed: 0.04), worst 0.21; border ends at
+nodes coincide exactly. Next for fabrication: pipes with node swelling (real Plateau borders thicken toward nodes), closed solid.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally

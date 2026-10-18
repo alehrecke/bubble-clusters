@@ -24,7 +24,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18g";
+    public const string Build = "2026-10-18h";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
