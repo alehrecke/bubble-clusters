@@ -136,7 +136,7 @@ public static class Program
                         var group = series.Tiles.Skip(pg * 4).Take(4).ToList();
                         var groupTags = tags.Skip(pg * 4).Take(4).ToList();
                         var page = Edition.Tile(group, A3W, A3H, 2, 2);
-                        var pi = Edition.Write(page, Path.Combine(dir, "a3_" + series.Name + "_" + va.Tag), "page_" + (pg + 1).ToString("D2", CI),
+                        var pi = Edition.Write(page, Path.Combine(dir, "a3_" + series.Name + "_" + va.Tag), "b" + e.Seed + "_" + series.Name + "_p" + (pg + 1).ToString("D2", CI) + "_" + va.Tag,
                                                "Cluster " + e.Seed + ", bubbles " + string.Join(" ", groupTags) + " (" + series.Name + ", " + va.Tag + ")", e);
                         pi["kind"] = series.Name + " page"; pi["style"] = va.Tag; pi["bubbles"] = groupTags; sheets.Add(pi);
                         log(string.Format(CI, "A3 {0} page {1} (bubbles {2}): {3} strokes, ~{4} min", series.Name, pg + 1, string.Join(" ", groupTags), pi["strokes"], pi["estMinutes"]));
