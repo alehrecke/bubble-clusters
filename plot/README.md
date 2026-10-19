@@ -12,6 +12,28 @@ plot/bin/Release/net9.0/bubbleplot.exe preview --seed 4721            # overview
 plot/bin/Release/net9.0/bubbleplot.exe edition --seed 4721 --style short   # every bubble (~20-40 s)
 ```
 
+A3 (4-up) and stroke-direction variants:
+
+```
+bubbleplot edition --seed 1093 --paper a3 --field border    # A3 overview + bubble sheets 4 per A3 page
+bubbleplot overviews --seeds 4721,1093,2207,3318            # four clusters on one A3 page
+bubbleplot preview --seed 4721 --style short --field all    # compare the three direction fields
+```
+
+`--paper a3`: each tile is rendered natively at A5 (148.5x210 mm) with the same physical line spacing
+(scaling an A4 sheet down would pack the lines tighter than the 0.3 mm pen can draw). Pages go in bubble
+order (page 1 = bubbles 01-04, left to right, top to bottom) in `a3_specimen_<style>/` and `a3_context_<style>/`.
+Cut marks between tiles are on a separate `marks` layer.
+
+`--field` (lighting stays global in all three):
+- `light` (default): rings around each bubble's light axis, along lines of equal brightness.
+- `border`: inset rings parallel to each film's own Plateau borders (level sets of the distance to the border).
+- `facet`: concentric circles around each film's centroid.
+
+True curvature directions don't work here: soap films have constant mean curvature and are close to
+spherical caps, where every direction is a principal direction, so the "principal curvature" field is
+noise. `border` is what following the facet's shape means for these surfaces.
+
 Options: `--style short|long|both`, `--count N` (bubbles; default random 9-15), `--detail B` (Border Detail
 batches of small bubbles after relaxing), `--bubble K` (which bubble a preview features), `--out DIR`.
 

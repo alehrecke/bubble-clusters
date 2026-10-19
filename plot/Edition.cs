@@ -20,6 +20,7 @@ public class EditionSettings
     public double PreviewPxPerMm = 5;
     public double RasterPxPerMm = 10;
     public double Inkmm_s = 25;        // pen-down speed for the time estimate
+    public double SheetW = 210, SheetH = 297;   // one sheet (A4); A5 tiles for 4-up A3 pages
 }
 
 public static class Edition
@@ -109,46 +110,52 @@ public static class Edition
     }
 
     // ---------- sheets ----------
-    public static Plot Overview(FoamSolver s, View v, HatchStyle st, EditionSettings e, out Scene scene)
+    // Drawing frames as fractions of the sheet (x, y, w, h), so the same layout works on any sheet size.
+    static readonly double[] OverviewFrame = { 0.105, 0.094, 0.79, 0.72 };
+    static readonly double[] SpecimenFrame = { 0.181, 0.175, 0.638, 0.572 };
+
+    static Plot NewPlot(EditionSettings e) { return new Plot { Width = e.SheetW, Height = e.SheetH }; }
+
+    static Scene Frame(FoamSolver s, View v, int bubble, double[] fr, Plot p, EditionSettings e, HatchStyle st, IEnumerable<Vec3> fit = null)
     {
-        var p = new Plot();
-        var sc = Scene.Surface(s.Mesh, 0);
-        sc.SetCamera(v.Forward, 22, 28, 166, 214);
+        var sc = Scene.Surface(s.Mesh, bubble);
+        sc.SetCamera(v.Forward, fr[0] * p.Width, fr[1] * p.Height, fr[2] * p.Width, fr[3] * p.Height, fit);
         Light(sc);
         sc.Rasterize(e.RasterPxPerMm, p.Width, p.Height);
+        if (st != null && st.Field == "border") sc.BuildBorderField();
+        return sc;
+    }
+
+    public static Plot Overview(FoamSolver s, View v, HatchStyle st, EditionSettings e)
+    {
+        var p = NewPlot(e);
+        var sc = Frame(s, v, 0, OverviewFrame, p, e, st);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + 1)));
         p.Layer("outline").AddRange(Outlines(s, sc, 0));
-        scene = sc;
         return p;
     }
 
     public static Plot Specimen(FoamSolver s, View v, int k, HatchStyle st, EditionSettings e)
     {
-        var p = new Plot();
-        var sc = Scene.Surface(s.Mesh, k);
-        sc.SetCamera(v.Forward, 38, 52, 134, 170);
-        Light(sc);
-        sc.Rasterize(e.RasterPxPerMm, p.Width, p.Height);
+        var p = NewPlot(e);
+        var sc = Frame(s, v, k, SpecimenFrame, p, e, st);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + k)));
         p.Layer("outline").AddRange(Outlines(s, sc, k));
         return p;
     }
 
-    public static Plot Context(FoamSolver s, View v, int k, HatchStyle st, EditionSettings e, Scene overview)
+    public static Plot Context(FoamSolver s, View v, int k, HatchStyle st, EditionSettings e)
     {
-        var p = new Plot();
-        var sc = Scene.Surface(s.Mesh, k);
+        var p = NewPlot(e);
         // Same framing as the overview, so the bubble sits where it is in the cluster.
-        var all = Scene.Surface(s.Mesh, 0);
-        sc.SetCamera(v.Forward, 22, 28, 166, 214, all.Tris.SelectMany(i => new[] { s.Mesh.V[s.Mesh.T[i].A] }));
-        Light(sc);
-        sc.Rasterize(e.RasterPxPerMm, p.Width, p.Height);
+        var all = Frame(s, v, 0, OverviewFrame, p, e, null);
+        var fit = all.Tris.Select(i => s.Mesh.V[s.Mesh.T[i].A]);
+        var sc = Frame(s, v, k, OverviewFrame, p, e, st, fit);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + k)));
         p.Layer("outline").AddRange(Outlines(s, sc, k));
         // The rest of the cluster in outline (its own hidden lines removed), not drawn over the featured bubble.
-        var ctx = Outlines(s, overview, 0);
         var keep = new List<List<V2>>();
-        foreach (var line in ctx)
+        foreach (var line in Outlines(s, all, 0))
         {
             var run = new List<V2>();
             foreach (var q in Densify(line, 0.2))
@@ -160,6 +167,38 @@ public static class Edition
         }
         p.Layer("context").AddRange(keep.Select(l => Hatcher.Simplify(l, 0.02)));
         return p;
+    }
+
+    // Several sheets tiled cols x rows onto one page (each tile keeps its own size and line spacing), plus
+    // short cut marks between tiles on their own layer ("marks": plot it, or don't).
+    public static Plot Tile(IList<Plot> tiles, double pageW, double pageH, int cols, int rows)
+    {
+        var page = new Plot { Width = pageW, Height = pageH };
+        double tw = pageW / cols, th = pageH / rows;
+        foreach (var name in new[] { "hatch", "outline", "context" }) page.Layer(name);
+        for (int i = 0; i < tiles.Count && i < cols * rows; i++)
+        {
+            var off = new V2((i % cols) * tw, (i / cols) * th);
+            foreach (var name in tiles[i].LayerOrder)
+                page.Layer(name).AddRange(tiles[i].Layers[name].Select(l => l.Select(q => q + off).ToList()));
+        }
+        var marks = page.Layer("marks");
+        const double m = 4;
+        for (int c = 1; c < cols; c++)
+            for (int r = 0; r <= rows; r++)
+            {
+                double x = c * tw, y = r * th;
+                if (r > 0) marks.Add(new List<V2> { new V2(x, y - m), new V2(x, y) });
+                if (r < rows) marks.Add(new List<V2> { new V2(x, y), new V2(x, y + m) });
+            }
+        for (int r = 1; r < rows; r++)
+            for (int c = 0; c <= cols; c++)
+            {
+                double x = c * tw, y = r * th;
+                if (c > 0) marks.Add(new List<V2> { new V2(x - m, y), new V2(x, y) });
+                if (c < cols) marks.Add(new List<V2> { new V2(x, y), new V2(x + m, y) });
+            }
+        return page;
     }
 
     static IEnumerable<V2> Densify(List<V2> l, double step)

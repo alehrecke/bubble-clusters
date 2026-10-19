@@ -17,6 +17,11 @@ public class HatchStyle
     public double MaxLength = 80;      // long style (mm)
     public double Step = 0.15;         // tracing step (mm)
     public double Ambient = 0.1;
+    // Stroke direction field (the lighting stays global either way):
+    //   light   rings around each bubble's light axis (along lines of equal brightness)
+    //   facet   rings around each film's own axis (concentric on every facet)
+    //   border  inset rings parallel to each film's Plateau borders (level sets of distance to the border)
+    public string Field = "light";
 }
 
 public static class Hatcher
@@ -43,14 +48,35 @@ public static class Hatcher
             // points (n = +A, -A): +A is the highlight, which gets no strokes, and -A faces away from the
             // viewer. (A vertical axis put a visible pole under every bubble; a sideways guide field fanned
             // the lines into points on the outlines.)
-            Vec3 A = axisOf(sc.Owner[s]);
-            Vec3 t = Vec3.Cross(n, A);
-            if (t.LengthSq < 0.01) t = Vec3.Cross(n, sc.F);
+            Vec3 t; double ok;
+            if (st.Field == "border")
+            {
+                Vec3 g = sc.FieldAt(s, q);
+                ok = g.Length;                                   // < 1 where the rings meet (medial axis)
+                t = Vec3.Cross(n, g);
+            }
+            else if (st.Field == "facet")
+            {
+                // Circles around the film's centroid, about its mean normal (works on flat films too, where
+                // the normal barely changes and n x axis would vanish).
+                int f = sc.FaceIdx[s];
+                Vec3 A = sc.FilmAxis[f], r = pos - sc.FilmCentre[f];
+                r = r - A * Vec3.Dot(r, A);
+                t = Vec3.Cross(A, r); t = t - n * Vec3.Dot(t, n);
+                ok = Math.Min(1, r.Length * sc.S / 0.6);         // no strokes within ~0.6 mm of the centre
+            }
+            else
+            {
+                Vec3 A = axisOf(sc.Owner[s]);
+                t = Vec3.Cross(n, A);
+                ok = Math.Min(1, t.Length * 4);                  // ~0 at the rings' centre
+            }
+            if (t.LengthSq < 1e-6) t = Vec3.Cross(n, sc.F);
             t = t.Normalized();
             double dx = Vec3.Dot(t, sc.R), dy = -Vec3.Dot(t, sc.U);
             double dl = Math.Sqrt(dx * dx + dy * dy);
             if (dl < 1e-6) { dx = 1; dy = 0; dl = 1; }
-            return new[] { tone, dx / dl, dy / dl, s, (double)sc.FaceIdx[s] };
+            return new[] { tone, dx / dl, dy / dl, s, (double)sc.FaceIdx[s], ok };
         };
         Func<double, double> sepOf = tone =>
         {
@@ -92,7 +118,7 @@ public static class Hatcher
             while (len < maxLen)
             {
                 var a = sample(p);
-                if (a == null || a[4] != faceId) break;
+                if (a == null || a[4] != faceId || a[5] < 0.5) break;
                 var d = new V2(a[1], a[2]) * sign;
                 if (prevDir.Length > 0 && d.X * prevDir.X + d.Y * prevDir.Y < 0) d = d * -1;   // keep heading
                 if (prevDir.Length > 0 && d.X * prevDir.X + d.Y * prevDir.Y < 0.75) break;      // too sharp a turn
@@ -125,7 +151,7 @@ public static class Hatcher
         {
             var q = seeds.Dequeue();
             var a = sample(q);
-            if (a == null) continue;
+            if (a == null || a[5] < 0.5) continue;
             double sep = sepOf(a[0]);
             if (sep > st.SepMax * 1.01) continue;
             if (!free(q, sep)) continue;

@@ -54,10 +54,119 @@ public class Scene
         var idx = new Dictionary<long, int>();
         foreach (long f in sc.Face) { int i; if (!idx.TryGetValue(f, out i)) { i = idx.Count; idx[f] = i; } sc.FaceIdx.Add(i); }
         sc.SmoothNormals();
+        sc.FilmAxis = new Vec3[idx.Count];
+        for (int k = 0; k < sc.Tris.Count; k++) sc.FilmAxis[sc.FaceIdx[k]] = sc.FilmAxis[sc.FaceIdx[k]] + sc.TriNormal(k);
+        for (int f = 0; f < idx.Count; f++) sc.FilmAxis[f] = sc.FilmAxis[f].Normalized();
+        sc.FilmCentre = new Vec3[idx.Count];
+        var area = new double[idx.Count];
+        for (int k = 0; k < sc.Tris.Count; k++)
+        {
+            var t = m.T[sc.Tris[k]]; double a = sc.TriNormal(k).Length;
+            sc.FilmCentre[sc.FaceIdx[k]] = sc.FilmCentre[sc.FaceIdx[k]] + (m.V[t.A] + m.V[t.B] + m.V[t.C]) * (a / 3);
+            area[sc.FaceIdx[k]] += a;
+        }
+        for (int f = 0; f < idx.Count; f++) sc.FilmCentre[f] = sc.FilmCentre[f] / Math.Max(area[f], 1e-30);
         return sc;
     }
 
-    Vec3 TriNormal(int s)
+    // ---------- facet-following direction fields ----------
+    public Vec3[] FilmAxis;                         // per film: area-weighted mean outward normal
+    public Vec3[] FilmCentre;                       // per film: area centroid
+    Vec3[] fieldCorner;                             // per surface triangle corner: unit gradient of distance to the film's border
+
+    // Distance from each film's own border (shortest paths along mesh edges, then smoothed), and its gradient.
+    // Strokes run along its level sets: inset rings parallel to the facet's Plateau borders.
+    public void BuildBorderField(int smoothIters = 30)
+    {
+        var local = new Dictionary<long, int>();                  // (film, vertex) -> local id
+        var vert = new List<int>();
+        var corner = new int[3 * Tris.Count];
+        for (int k = 0; k < Tris.Count; k++)
+        {
+            var t = M.T[Tris[k]]; int f = FaceIdx[k];
+            int[] vs = { t.A, t.B, t.C };
+            for (int j = 0; j < 3; j++)
+            {
+                long key = (long)f * 4194304L + vs[j]; int i;
+                if (!local.TryGetValue(key, out i)) { i = vert.Count; local[key] = i; vert.Add(vs[j]); }
+                corner[3 * k + j] = i;
+            }
+        }
+        int n = vert.Count;
+        // An edge used by only one triangle of its film is on the film's border.
+        var edgeUse = new Dictionary<long, int>(LongKey.Comparer);
+        var nbr = new List<int>[n];
+        for (int i = 0; i < n; i++) nbr[i] = new List<int>(6);
+        for (int k = 0; k < Tris.Count; k++)
+            for (int e = 0; e < 3; e++)
+            {
+                int a = corner[3 * k + e], b = corner[3 * k + (e + 1) % 3];
+                long key = FoamMesh.EdgeKey(a, b); int c; edgeUse.TryGetValue(key, out c); edgeUse[key] = c + 1;
+                if (c == 0) { nbr[a].Add(b); nbr[b].Add(a); }
+            }
+        var d = new double[n]; var fixedV = new bool[n];
+        for (int i = 0; i < n; i++) d[i] = double.MaxValue;
+        var pq = new PriorityQueue<int, double>();
+        foreach (var kv in edgeUse)
+            if (kv.Value == 1)
+            {
+                int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
+                if (!fixedV[a]) { fixedV[a] = true; d[a] = 0; pq.Enqueue(a, 0); }
+                if (!fixedV[b]) { fixedV[b] = true; d[b] = 0; pq.Enqueue(b, 0); }
+            }
+        while (pq.Count > 0)
+        {
+            int v; double dv; pq.TryDequeue(out v, out dv);
+            if (dv > d[v]) continue;
+            foreach (int u in nbr[v])
+            {
+                double nd = dv + (M.V[vert[u]] - M.V[vert[v]]).Length;
+                if (nd < d[u]) { d[u] = nd; pq.Enqueue(u, nd); }
+            }
+        }
+        for (int i = 0; i < n; i++) if (d[i] == double.MaxValue) d[i] = 0;   // closed film without a border
+        // Smooth the edge-path distance (it zigzags along the mesh); borders stay at 0.
+        for (int it = 0; it < smoothIters; it++)
+        {
+            var nd = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                if (fixedV[i] || nbr[i].Count == 0) { nd[i] = d[i]; continue; }
+                double sum = 0; foreach (int u in nbr[i]) sum += d[u];
+                nd[i] = 0.5 * d[i] + 0.5 * sum / nbr[i].Count;
+            }
+            d = nd;
+        }
+        // Per-triangle gradient, area-averaged to the (film, vertex) corners.
+        var g = new Vec3[n];
+        for (int k = 0; k < Tris.Count; k++)
+        {
+            int i0 = corner[3 * k], i1 = corner[3 * k + 1], i2 = corner[3 * k + 2];
+            Vec3 p0 = M.V[vert[i0]], p1 = M.V[vert[i1]], p2 = M.V[vert[i2]];
+            Vec3 N = Vec3.Cross(p1 - p0, p2 - p0); double A2 = N.Length;
+            if (A2 < 1e-14) continue;
+            Vec3 u = N / A2;
+            Vec3 grad = (Vec3.Cross(u, p2 - p1) * d[i0] + Vec3.Cross(u, p0 - p2) * d[i1] + Vec3.Cross(u, p1 - p0) * d[i2]) / A2;
+            g[i0] = g[i0] + grad * A2; g[i1] = g[i1] + grad * A2; g[i2] = g[i2] + grad * A2;
+        }
+        fieldCorner = new Vec3[3 * Tris.Count];
+        for (int c = 0; c < corner.Length; c++) fieldCorner[c] = g[corner[c]].Normalized();
+    }
+
+    // Interpolated border field at a sheet point on surface triangle s. Its length drops below 1 where
+    // the corners disagree, i.e. on the facet's medial axis, where the inset rings meet.
+    public Vec3 FieldAt(int s, V2 q)
+    {
+        var t = M.T[Tris[s]];
+        V2 a = proj[t.A], b = proj[t.B], c = proj[t.C];
+        double den = (b.Y - c.Y) * (a.X - c.X) + (c.X - b.X) * (a.Y - c.Y);
+        double l0 = ((b.Y - c.Y) * (q.X - c.X) + (c.X - b.X) * (q.Y - c.Y)) / den;
+        double l1 = ((c.Y - a.Y) * (q.X - c.X) + (a.X - c.X) * (q.Y - c.Y)) / den;
+        double l2 = 1 - l0 - l1;
+        return fieldCorner[3 * s] * l0 + fieldCorner[3 * s + 1] * l1 + fieldCorner[3 * s + 2] * l2;
+    }
+
+    public Vec3 TriNormal(int s)
     {
         var t = M.T[Tris[s]];
         var n = Vec3.Cross(M.V[t.B] - M.V[t.A], M.V[t.C] - M.V[t.A]);

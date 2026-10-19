@@ -88,6 +88,7 @@ Read these pages at the start of any session before writing code:
 - `plot/` (since 2026-10-18): **bubbleplot**, headless pen-plot editions (net9 exe compiling `core/`). Seeded cluster →
   overview + per-bubble specimen/context A4 SVGs (pen layers) + PNG previews + manifest, in `editions/<seed>/` (git-ignored).
   Two hatching styles: `short` (Pasma-style dashes) and `long` (flowing lines), both ringing each bubble's light axis.
+  `--field light|facet|border` stroke direction; `--paper a3` = 4-up A3 pages (A5 tiles); `overviews --seeds` = 4 clusters per A3.
   See `plot/README.md`. Check the PNGs yourself before showing Alex (Read the image).
 - `runs/`: GH recordings. When Alex asks about a run, read the newest folder's `log.jsonl`
   and `view_*.png`, run `harness obj` on its `mesh_*.obj`, or `harness replay` the folder.
