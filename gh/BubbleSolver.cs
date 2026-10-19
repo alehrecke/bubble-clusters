@@ -107,7 +107,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18i";
+    public const string Build = "2026-10-18j";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -4500,6 +4500,21 @@ public static class StreamBed
         public int NextSpawn = int.MinValue, Spawned, Removed;
         public HashSet<int> RemoveAsked = new HashSet<int>();
         public List<Vec3> LastSpawn = new List<Vec3>();
+        public List<string> Log = new List<string>();   // removals and floor raises, for the run log (caller clears)
+        public bool FloorNoted;
+    }
+
+    // Close to the bed (centre within 3 radii) or to another bubble's films (within one radius of its own)?
+    static bool NearAnything(FoamSolver s, int k, Vec3 c, double r)
+    {
+        if (s.Host != null && s.Host.Height(c) < 3 * r) return true;
+        var m = s.Mesh;
+        var own = new HashSet<int>();
+        foreach (var t in m.T) if (t.Neg == k || t.Pos == k) { own.Add(t.A); own.Add(t.B); own.Add(t.C); }
+        double lim = 2 * r;
+        for (int v = 0; v < m.V.Count; v++)
+            if (!own.Contains(v) && (m.V[v] - c).LengthSq < lim * lim) return true;
+        return false;
     }
 
     public static string Tick(FoamSolver s, StreamSettings set, Random rng, State st)
@@ -4531,12 +4546,20 @@ public static class StreamBed
             Vec3 f = set.Flow / r;
             if (set.Sink != 0 && s.Host != null) f = f - s.Host.Normal(cen[k]) * (set.Sink / r);
             force[k] = f;
-            // Left the domain downstream: remove.
-            if (Vec3.Dot(cen[k] - set.Source, dir) > set.Exit && !st.RemoveAsked.Contains(k))
+            // Left the domain downstream: remove. Only a bubble that is really drifting away: not while a
+            // rebuild is running (it may be joining the cluster in that rebuild), and not one close to the bed or
+            // to another bubble (run 2026-10-19_004710: with the flow aimed at the bed and Exit = the source's
+            // height, bubbles arriving at the cluster were culled before their contact rebuild finished).
+            if (Vec3.Dot(cen[k] - set.Source, dir) > set.Exit && !st.RemoveAsked.Contains(k) && !s.RebuildPending
+                && !NearAnything(s, k, cen[k], r))
             {
                 st.RemoveAsked.Add(k);
                 s.RequestPop(k);
                 st.Removed++;
+                st.Log.Add(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "step {0}: stream removes bubble {1} at ({5:F2}, {6:F2}, {7:F2}), {2:F2} downstream (exit {3}), {8:F2} above the bed",
+                    s.Steps, k, Vec3.Dot(cen[k] - set.Source, dir), set.Exit, s.RebuildPending, cen[k].X, cen[k].Y, cen[k].Z,
+                    s.Host != null ? s.Host.Height(cen[k]) : double.NaN));
             }
         }
         s.ExtForce = force;
@@ -4549,6 +4572,20 @@ public static class StreamBed
             double a = 2 * Math.PI * rng.NextDouble(), rr = set.Spread * Math.Sqrt(rng.NextDouble());
             Vec3 p = set.Source + u * (rr * Math.Cos(a)) + w * (rr * Math.Sin(a));
             double rad = set.RMin + (set.RMax - set.RMin) * rng.NextDouble();
+            // Smallest bubble a rebuild keeps reliably: 1.5 rebuild cells, as Border Detail. Smaller ones fall
+            // between the grid samples when they touch the cluster and get dropped or come out deflated.
+            double floor = 1.5 * s.TargetEdge * s.S.RebuildGridFactor;
+            if (rad < floor)
+            {
+                if (!st.FloorNoted)
+                {
+                    st.FloorNoted = true;
+                    st.Log.Add(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                        "step {0}: stream radii below {1:G3} raised to it (smallest this CellSize holds; lower CellSize for smaller bubbles)",
+                        s.Steps, floor));
+                }
+                rad = floor;
+            }
             // Keep clear of everything (a bubble just spawned may still be near the source).
             double gap = double.MaxValue;
             foreach (var q in m.V) gap = Math.Min(gap, (q - p).Length - rad);

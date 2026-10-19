@@ -843,7 +843,12 @@ public static class Program
                     };
                 }
             }
-            if (streamSet != null && st % 25 == 0) StreamBed.Tick(s, streamSet, streamRng, streamState);
+            if (streamSet != null && st % 25 == 0)
+            {
+                StreamBed.Tick(s, streamSet, streamRng, streamState);
+                foreach (var l in streamState.Log) Console.WriteLine("   " + l);
+                streamState.Log.Clear();
+            }
             List<Tuple<string, List<Vec3>, List<double>>> bb;
             if (batches.TryGetValue(st, out bb)) foreach (var bt in bb) s.RequestAddBatch(bt.Item2, bt.Item3, bt.Item1);
             KeyValuePair<double, Dictionary<int, Vec3>> pv;

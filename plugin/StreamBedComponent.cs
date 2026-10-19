@@ -105,6 +105,11 @@ namespace BubbleClusters
                 // Respect the solver's triangle limit: stop spawning near it (floating ones keep going).
                 if (h.Triangles + h.EstimateTriangles(set.RMax) > h.TriangleLimit) set.MaxFree = 0;
                 status = StreamBed.Tick(h.Solver, set, rng, state);
+                foreach (var l in state.Log) h.Note(l);   // removals / radius floor into the run log
+                state.Log.Clear();
+                if (state.FloorNoted && set.RMin < 1.5 * h.CellSize * h.Solver.S.RebuildGridFactor)
+                    status += string.Format(CultureInfo.InvariantCulture, "\nradii below {0:G3} raised to it (smallest this CellSize holds)",
+                                            1.5 * h.Solver.TargetEdge * h.Solver.S.RebuildGridFactor);
                 if (set.MaxFree == 0) status += string.Format(CultureInfo.InvariantCulture, "\npaused spawning: the mesh is at {0:N0} triangles (limit {1:N0})", h.Triangles, h.TriangleLimit);
                 spawned = state.LastSpawn.Select(q => new Point3d(q.X, q.Y, q.Z)).ToList();
                 // Keep the solver running: it stops ticking once settled, and this generator only runs on its ticks.
