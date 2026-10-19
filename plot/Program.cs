@@ -81,9 +81,26 @@ public static class Program
 
         var e = settings(int.Parse(opt("seed", "1")));
         string dir = Path.Combine(root, e.Seed.ToString(CI));
-        Directory.CreateDirectory(dir);
-        var s = Edition.Generate(e, dir, log);
-        var view = Edition.MakeView(e.Seed);
+        FoamSolver s;
+        int featured = -1;
+        if (cmd == "obj")
+        {
+            // bubbleplot obj <foam.obj> [--seed N for the view] : plot a saved foam (harness / GH run mesh) instead of generating one.
+            // Previews the overview + the interior bubble with the most faces (a whole cell, e.g. a Kelvin cell).
+            string objPath = Path.GetFullPath(args[1]);
+            dir = Path.Combine(root, "obj_" + Path.GetFileNameWithoutExtension(objPath));
+            Directory.CreateDirectory(dir);
+            s = new FoamSolver(FoamAnalysis.FromObj(File.ReadAllText(objPath)), new SolverSettings());
+            featured = MostFacedInterior(s.Mesh);
+            log("loaded " + objPath + ": " + s.Mesh.BubbleCount + " bubbles, " + s.Mesh.T.Count + " triangles; featured bubble " + featured);
+            cmd = "preview";
+        }
+        else
+        {
+            Directory.CreateDirectory(dir);
+            s = Edition.Generate(e, dir, log);
+        }
+        var view = Edition.MakeView(e.Seed, double.Parse(opt("az", "NaN"), CI), double.Parse(opt("el", "NaN"), CI));
         if (cmd == "tone") { Edition.ToneImage(s, view, e, Path.Combine(dir, "tone_" + e.Light + ".png")); log("tone image written"); return 0; }
         var vol = s.Mesh.Volumes();
         var bubbles = Enumerable.Range(1, s.Mesh.BubbleCount).Where(k => !s.IsDead(k) && vol[k] > 0).ToList();
@@ -106,7 +123,7 @@ public static class Program
             log("overview (" + va.Tag + "): " + info["strokes"] + " strokes, ~" + info["estMinutes"] + " min");
 
             var which = cmd == "preview"
-                ? new List<int> { int.Parse(opt("bubble", bubbles.OrderByDescending(k => s.DesiredRadius(k)).Skip(1).First().ToString(CI))) }
+                ? new List<int> { int.Parse(opt("bubble", (featured > 0 ? featured : bubbles.OrderByDescending(k => s.DesiredRadius(k)).Skip(1).First()).ToString(CI))) }
                 : bubbles;
             if (a3) { e.SheetW = A3W / 2; e.SheetH = A3H / 2; }
             var spec = new List<Plot>(); var ctx = new List<Plot>(); var tags = new List<string>();
@@ -148,5 +165,21 @@ public static class Program
         File.WriteAllText(Path.Combine(dir, "cluster.obj"), FoamAnalysis.ToObj(s.Mesh));
         log("done: " + dir);
         return 0;
+    }
+
+    // The bubble with the most faces among those with no film to the outside (-1 if none).
+    static int MostFacedInterior(FoamMesh m)
+    {
+        var nb = new Dictionary<int, HashSet<int>>(); var outer = new HashSet<int>();
+        foreach (var t in m.T)
+        {
+            if (t.Neg <= 0 || t.Pos <= 0) { outer.Add(t.Neg); outer.Add(t.Pos); continue; }
+            HashSet<int> h;
+            if (!nb.TryGetValue(t.Neg, out h)) nb[t.Neg] = h = new HashSet<int>(); h.Add(t.Pos);
+            if (!nb.TryGetValue(t.Pos, out h)) nb[t.Pos] = h = new HashSet<int>(); h.Add(t.Neg);
+        }
+        int best = -1, bf = -1;
+        foreach (var kv in nb) if (!outer.Contains(kv.Key) && kv.Value.Count > bf) { bf = kv.Value.Count; best = kv.Key; }
+        return best;
     }
 }

@@ -392,6 +392,34 @@ r 0.385 with cell 0.3 sat at the insert clamp and lost 50-65% in contact rebuild
 component's Info. `StreamBed.State.Log` (removals with position / height, floor note) goes to the run log through `FoamHandle.Note`,
 and harness `replaylive` prints it. Replay of the run: the only removal left is a bubble really drifting off the far edge after the
 source was switched to the other side. `harness stream`: 36 spawned, 0 removed, 0 refused, all volumes 1.00.
+
+**2026-10-19 (build 2026-10-19a): crystal lattices + size fields.** `core/Seeding.cs`:
+- `Seeding.Lattice` (SC / BCC / FCC / HCP / WP (A15 sites) / Hex layer). Spacing is the nearest-neighbour distance; regions are a
+  ball, a box, or any inside test; there are plane frame and jitter options.
+- `Seeding.Scatter`: graded Bridson blue noise; neighbours 0.9 x (r1 + r2) apart, then `ClusterPacker.Pack`.
+- `SizeField`: attractor points / polylines (Near → Far, smoothstep over Falloff), an axis gradient, and value noise (exp); the parts
+  multiply, clamped.
+
+Lattice sites all get **1.04 x the covering radius** (sampled max distance to the Voronoi cell's corners), NOT the equal-volume
+radius. With the equal-volume radius, the corners of each cell weren't covered: outside-air pockets inside the cluster, 0 interior
+bubbles. With equal radii the power diagram = the Voronoi diagram, so the crystal is unchanged; the cluster just starts inflated.
+
+`harness lattice <kind|all> [ballR spacings] [steps] [jitter]` counts interior faces (bubbles with no outside film):
+
+| Lattice | Interior faces | Notes |
+|---|---|---|
+| BCC | 14 ×9, 13 ×6 (Kelvin) | |
+| WP (ball 3.0) | 12 ×9, 14 ×24 (1 : 2.7; ideal 1 : 3) | worst border 7.7°, 0 rebuilds |
+| FCC | all 12 | stays rhombic-dodecahedral by symmetry, node dev up to 54°, 0 rebuilds |
+| FCC + jitter 0.04 | 12–15 mix | 3 rebuilds |
+| HCP | 12–15 mix | 4 rebuilds |
+| SC | 10–14 mix | 8 rebuilds |
+
+`harness graded`: 132 bubbles, mean r 0.48 near the attractor → 1.17 far; 1 piece, 22 rebuilds.
+
+GH: `LatticeComponent` ("Bubble Lattice") and `SizeFieldComponent` ("Size Field"); see SETUP 3f.
+bubbleplot: `obj <file>` command (plots a saved foam, features the most-faced interior bubble), `--az / --el` view override.
+Previews: `editions/obj_lattice_BCC`, `obj_lattice_WP`, `obj_graded`.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally

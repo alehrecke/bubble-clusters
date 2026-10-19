@@ -90,10 +90,13 @@ public static class Edition
     // ---------- view ----------
     public class View { public Vec3 Forward, Light; public double Azimuth, Elevation; public int Seed; }
 
-    public static View MakeView(int seed)
+    // azDeg / elDeg (NaN = from the seed): camera direction, azimuth around Z from +X, elevation above the XY plane.
+    public static View MakeView(int seed, double azDeg = double.NaN, double elDeg = double.NaN)
     {
         var rng = new Random(seed * 17 + 3);
         double az = rng.NextDouble() * 2 * Math.PI, el = (18 + 22 * rng.NextDouble()) * Math.PI / 180;
+        if (!double.IsNaN(azDeg)) az = azDeg * Math.PI / 180;
+        if (!double.IsNaN(elDeg)) el = elDeg * Math.PI / 180;
         var f = new Vec3(-Math.Cos(el) * Math.Cos(az), -Math.Cos(el) * Math.Sin(az), -Math.Sin(el));
         return new View { Forward = f, Azimuth = az, Elevation = el, Seed = seed };
     }

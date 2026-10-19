@@ -359,6 +359,48 @@ public static class Program
         if (cmd == "big") { BigTests(args.Length > 1 ? args[1] : "all"); return 0; }
         if (cmd == "rebuilddebug") { RebuildDebug(args[1], int.Parse(args[2]), int.Parse(args[3])); return 0; }
         if (cmd == "failrepro") { FailRepro(args[1], int.Parse(args[2]), args.Length > 3 ? args[3] : "any"); return 0; }
+        if (cmd == "lattice")
+        {
+            // harness lattice <SC|BCC|FCC|HCP|WP|Hex|all> [ball radius in spacings, default 2.2] [steps, default 3000]
+            string which = args.Length > 1 ? args[1] : "all";
+            double ballR = args.Length > 2 ? double.Parse(args[2], CI) : 2.2;
+            int steps = args.Length > 3 ? int.Parse(args[3]) : 3000;
+            double jitter = args.Length > 4 ? double.Parse(args[4], CI) : 0;
+            var kinds = which == "all" ? new[] { LatticeKind.BCC, LatticeKind.WP, LatticeKind.FCC, LatticeKind.HCP, LatticeKind.SC }
+                                       : new[] { (LatticeKind)Enum.Parse(typeof(LatticeKind), which, true) };
+            foreach (var kind in kinds) LatticeTest(kind, ballR, steps, jitter);
+            return 0;
+        }
+        if (cmd == "graded")
+        {
+            // harness graded [steps]: graded scatter in a ball of radius 5, base radius 0.9, point attractor at (-5,0,0)
+            // (Near 0.35 -> Far 1.3 over 8 units) plus a little noise.
+            int steps = args.Length > 1 ? int.Parse(args[1]) : 2000;
+            var f = new SizeField { Near = 0.35, Far = 1.3, Falloff = 8, Noise = 0.15, NoiseScale = 3, Min = 0.2, Max = 3 };
+            f.Points.Add(new Vec3(-5, 0, 0));
+            List<Vec3> c; List<double> r;
+            Seeding.Scatter(p => p.LengthSq <= 25, new Vec3(-5, -5, -5), new Vec3(5, 5, 5), 0.9, f, 3, 400, out c, out r);
+            Console.WriteLine(string.Format(CI, "scatter: {0} bubbles, r {1:F2}..{2:F2}", c.Count, r.Min(), r.Max()));
+            for (int b = 0; b < 5; b++)
+            {
+                double x0 = -5 + 2 * b, x1 = x0 + 2;
+                var sel = Enumerable.Range(0, c.Count).Where(i => c[i].X >= x0 && c[i].X < x1).Select(i => r[i]).ToList();
+                if (sel.Count > 0) Console.WriteLine(string.Format(CI, "  x {0,4:F0}..{1,3:F0}: {2,3} bubbles, mean r {3:F2}", x0, x1, sel.Count, sel.Average()));
+            }
+            ClusterPacker.Pack(c, r, 1000, 0.01);
+            double h = Math.Max(r.Min() / 5, Math.Sqrt(r.Sum(x => 4 * Math.PI * x * x) / (0.433 * 90000)));
+            string info;
+            var s0 = new FoamSolver(MobiusMesher.Build(c, r, h, out info), new SolverSettings { Rearrange = true });
+            s0.SetTargetRadii(r);
+            Console.WriteLine(string.Format(CI, "  cell {0:F3}, {1} tris", h, s0.Mesh.T.Count));
+            int rb = 0;
+            for (int i = 0; i < steps; i++) { s0.Step(); rb += s0.RearrangeLog.Count(l => l.Contains("rebuilt")); s0.RearrangeLog.Clear(); }
+            bool[] onHost; var piece = Contacts.Pieces(s0.Mesh, out onHost);
+            Console.WriteLine(string.Format(CI, "  relaxed {0} steps, {1} rebuilds, pieces {2}", steps, rb, piece.Skip(1).Where(x => x > 0).Distinct().Count()));
+            foreach (var l in FoamAnalysis.Report(s0).Split('\n').Skip(1).Take(3)) Console.WriteLine("    " + l);
+            File.WriteAllText("graded.obj", FoamAnalysis.ToObj(s0.Mesh));
+            return 0;
+        }
         if (cmd == "gravity")
         {
             // A small bubble stuck high on the flank of a dome on a plane. gravity <g> [stepsOn] [stepsOff]
@@ -722,6 +764,48 @@ public static class Program
     // recorded solver steps, in background-rebuild mode like GH. Rebuild timing differs from GH,
     // so it's a faithful scenario, not a bit-exact replay.
     //   dotnet run -- replaylive <runDir> [steps]
+    // Relax a lattice ball and count faces (distinct neighbouring bubbles) of the interior bubbles, i.e. those
+    // with no film to the outside. Kelvin (BCC) interior cells have 14; Weaire-Phelan 12 and 14 (1 : 3).
+    static void LatticeTest(LatticeKind kind, double ballR, int steps, double jitter = 0)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var set = new LatticeSettings { Kind = kind, Spacing = 2, BallRadius = ballR * 2, Jitter = jitter };
+        List<Vec3> c; List<double> r;
+        Seeding.Lattice(set, out c, out r);
+        double h = r.Min() / 5;
+        string info;
+        var mesh = MobiusMesher.Build(c, r, h, out info);
+        var s = new FoamSolver(mesh, new SolverSettings { Rearrange = true });
+        s.SetTargetRadii(r);
+        Console.WriteLine(string.Format(CI, "{0}: {1} bubbles, r {2:F3}, cell {3:F3}, {4} tris", kind, c.Count, r[0], h, mesh.T.Count));
+        int rearr = 0;
+        for (int i = 0; i < steps; i++)
+        {
+            s.Step();
+            foreach (var l in s.RearrangeLog) if (l.Contains("rebuilt")) { rearr++; Console.WriteLine("   " + l.Substring(0, Math.Min(160, l.Length))); }
+            s.RearrangeLog.Clear();
+        }
+        while (s.RebuildPending) { s.Step(); s.RearrangeLog.Clear(); }
+        var m = s.Mesh;
+        var nb = new Dictionary<int, HashSet<int>>();
+        var outer = new HashSet<int>();
+        foreach (var t in m.T)
+        {
+            if (t.Neg == 0 || t.Pos == 0) { outer.Add(t.Neg); outer.Add(t.Pos); continue; }
+            if (t.Neg < 0 || t.Pos < 0) continue;
+            HashSet<int> hs;
+            if (!nb.TryGetValue(t.Neg, out hs)) nb[t.Neg] = hs = new HashSet<int>(); hs.Add(t.Pos);
+            if (!nb.TryGetValue(t.Pos, out hs)) nb[t.Pos] = hs = new HashSet<int>(); hs.Add(t.Neg);
+        }
+        var hist = new SortedDictionary<int, int>();
+        foreach (var kv in nb) { if (outer.Contains(kv.Key)) continue; int f = kv.Value.Count; int cnt; hist.TryGetValue(f, out cnt); hist[f] = cnt + 1; }
+        var rep = FoamAnalysis.Report(s).Split('\n');
+        Console.WriteLine(string.Format(CI, "  {0}: interior bubbles {1}, faces histogram [{2}], rebuilds {3}, {4:F0} s",
+            kind, hist.Values.Sum(), string.Join(", ", hist.Select(kv => kv.Key + ":" + kv.Value)), rearr, sw.Elapsed.TotalSeconds));
+        foreach (var l in rep.Skip(1).Take(3)) Console.WriteLine("    " + l);
+        File.WriteAllText("lattice_" + kind + ".obj", FoamAnalysis.ToObj(s.Mesh));
+    }
+
     static void ReplayLive(string dir, int steps)
     {
         List<double> r;

@@ -66,6 +66,11 @@ True curvature directions don't work here: soap films have constant mean curvatu
 spherical caps, where every direction is a principal direction, so the "principal curvature" field is
 noise. `border` is what following the facet's shape means for these surfaces.
 
+Plot any saved foam instead of generating one: `bubbleplot obj <foam.obj> [--az deg --el deg]`. That covers a GH run's
+`mesh_*.obj` or a harness result (`harness lattice BCC` writes `lattice_BCC.obj`). It previews the overview plus the interior
+bubble with the most faces (e.g. a Kelvin cell). `--az` / `--el` set the view direction (camera azimuth from +X around Z, and
+elevation); otherwise the seed picks them.
+
 Options: `--style short|long|both`, `--count N` (bubbles; default random 9-15), `--detail B` (Border Detail
 batches of small bubbles after relaxing), `--bubble K` (which bubble a preview features), `--out DIR`.
 

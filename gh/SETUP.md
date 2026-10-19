@@ -145,6 +145,35 @@ current foam and ask the solver for changes. Your own Add / AddAt / Pop inputs k
 - `IsArc`, `Outer` (touches the outside air: the visible borders, e.g. for pen plots). `Host` toggles the footprint outlines.
 - Clean at the end: while the foam is still relaxing (Info says so), borders keep moving slightly.
 
+## 3f. Crystal lattices and size fields (plugin, build 2026-10-19a)
+**Bubble Lattice** (Pneuhaus → Bubbles) makes starting bubbles; wire `Centers` → solver `Centers`, `Radii` → `Radii`, solver
+`Pack` **off** for a crystal (packing would distort it), then Reset + Run.
+- `Kind`:
+  - `BCC`: Kelvin cells, 14 faces (6 squares, 8 hexagons).
+  - `WP`: Weaire-Phelan, 12- and 14-face cells, 1 : 3.
+  - `FCC`: rhombic dodecahedra. Unstable; held by perfect symmetry. Add `Jitter` ~0.03 and it rearranges like a real foam.
+  - `HCP`: rearranges.
+  - `SC`: cubes; rearranges.
+  - `Hex`: one honeycomb layer, a raft on a host plane.
+  - `Random`: a blue-noise fill, already packed.
+- `Spacing`: centre-to-centre distance. `Plane`: origin and orientation (tilt it to show the crystal from another axis).
+- Region: a closed `Region` Brep (any shape), or a ball of `Radius`, or (Radius 0) a box of `Count` spacings.
+- Info: count, sizes, what to expect, and a rough mesh size. Over 100k triangles, it says what CellSize to give the solver.
+- Interior cells are only "true" crystal cells 2+ layers in from the surface: the outer layer is rounded by the free surface, and
+  the next one partly. A ball of radius ~3 x Spacing has a few true interior cells (WP needs ~3; BCC shows Kelvin cells at ~2.2).
+
+**Size Field** makes bubble size vary over space. The parts multiply:
+- Attractor `Points` / `Curves`: `Near` at the attractor, blending to `Far` by `Falloff`.
+- An `Axis` line: `AxisStart` → `AxisEnd`.
+- `Noise` (strength) at wavelength `NoiseScale`.
+- Clamped to `Min`..`Max`.
+
+Feed `Field` into Bubble Lattice:
+- With `Kind` Random you get a graded foam: small bubbles near the attractors, big ones far away.
+- With a crystal kind, each site's radius is scaled, giving a distorted, graded crystal (it's packed for you).
+
+Or give it `Centers` + `Radii` to scale any radii directly (e.g. your own point sets).
+
 ## 4. Preview
 The component draws its own preview:
 - **Outer caps:** see-through pale blue.
