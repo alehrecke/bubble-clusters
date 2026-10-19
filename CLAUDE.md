@@ -382,6 +382,16 @@ nodes coincide exactly. Next for fabrication: pipes with node swelling (real Pla
 ApplyPull; GH input `Gravity`, last; `BubbleEngine.Gravity`). Default 0 = unchanged. Harness `gravity <g>` (r 0.5 bubble on the flank of a
 dome): g 0 → hovers (z 0.86); g 0.02 → rolls down (0.64), and after g → 0 angles clean (2.5 deg, worst 4.8) and better converged than
 no-gravity; 0.05 / 0.1 → leftover outliers (worst 35-50 deg). Recommend 0.02 as a settling aid, then 0.
+
+**2026-10-19 (build j): Stream Bed losing bubbles** (run 2026-10-19_004710_369, host plane, flow aimed down at the bed, Exit 10 = the
+source's height). There were 5 "air escaped" pops plus 1 merge, which looked like size losses but mostly weren't. The replay showed the
+Exit cull firing on bubbles that had reached the cluster while their contact rebuild was still running (they count as floating until it
+lands). `StreamBed` now removes a bubble only when no rebuild is pending and it isn't near anything (centre more than 3 r above the bed,
+no other bubble's films within 2 r of its centre). It also floors spawn radii at 1.5 rebuild cells, as Border Detail does (stream bubbles at
+r 0.385 with cell 0.3 sat at the insert clamp and lost 50-65% in contact rebuilds). The floor is noted once in the run log and the
+component's Info. `StreamBed.State.Log` (removals with position / height, floor note) goes to the run log through `FoamHandle.Note`,
+and harness `replaylive` prints it. Replay of the run: the only removal left is a bubble really drifting off the far edge after the
+source was switched to the other side. `harness stream`: 36 spawned, 0 removed, 0 refused, all volumes 1.00.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally
