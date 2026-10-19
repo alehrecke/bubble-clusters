@@ -15,3 +15,6 @@ RECOVERY/
 
 # Built plugin (dotnet build plugin -c Release)
 dist/
+
+# Pen-plot editions (bubbleplot output)
+editions/
