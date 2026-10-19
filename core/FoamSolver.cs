@@ -39,6 +39,10 @@ public class SolverSettings
     public double VolumeRate = 0.02; // max change of a bubble's target volume per step, as a fraction (smooth inflate/deflate)
     public double Pull = 0;          // strength of the pull toward each bubble's PullTarget (0 = off; ~1 moderate, ~5 stiff)
     public double Gather = 0;        // every bubble drifts toward GatherTo (0 = off; ~0.2 gentle, ~1 firm), like floating bubbles collecting
+    // Weight of the films (0 = off, physically exact foam). A uniform force per film area toward the host
+    // (or world -Z without one): bubbles resting on a neighbour's flank roll down into valleys / onto the bed.
+    // Films sag slightly while it's on; set it back to 0 for exact Plateau angles (positions stay).
+    public double Gravity = 0;
     public Vec3 GatherTo;
 }
 
@@ -1041,7 +1045,7 @@ public class FoamSolver
     void ApplyPull()
     {
         int nb = Mesh.BubbleCount;
-        bool any = S.Gather > 0;
+        bool any = S.Gather > 0 || S.Gravity > 0;
         if (S.Pull > 0) for (int k = 1; k <= nb; k++) if (PullOn[k]) { any = true; break; }
         if (ExtForce != null) for (int k = 1; k < ExtForce.Length && !any; k++) if (ExtForce[k].LengthSq > 0) any = true;
         if (!any) return;
@@ -1071,6 +1075,12 @@ public class FoamSolver
                 fk[3 * k] = s * (PullTarget[k].X - cx);
                 fk[3 * k + 1] = s * (PullTarget[k].Y - cy);
                 fk[3 * k + 2] = s * (PullTarget[k].Z - cz);
+                forced[k] = true;
+            }
+            if (S.Gravity > 0)
+            {
+                Vec3 down = Host != null ? Host.Normal(new Vec3(cx, cy, cz)) * -1 : new Vec3(0, 0, -1);
+                fk[3 * k] += S.Gravity * down.X; fk[3 * k + 1] += S.Gravity * down.Y; fk[3 * k + 2] += S.Gravity * down.Z;
                 forced[k] = true;
             }
             if (ExtForce != null && k < ExtForce.Length && ExtForce[k].LengthSq > 0)

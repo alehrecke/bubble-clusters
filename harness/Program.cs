@@ -359,6 +359,34 @@ public static class Program
         if (cmd == "big") { BigTests(args.Length > 1 ? args[1] : "all"); return 0; }
         if (cmd == "rebuilddebug") { RebuildDebug(args[1], int.Parse(args[2]), int.Parse(args[3])); return 0; }
         if (cmd == "failrepro") { FailRepro(args[1], int.Parse(args[2]), args.Length > 3 ? args[3] : "any"); return 0; }
+        if (cmd == "gravity")
+        {
+            // A small bubble stuck high on the flank of a dome on a plane. gravity <g> [stepsOn] [stepsOff]
+            double g = double.Parse(args[1], CI);
+            int on = args.Length > 2 ? int.Parse(args[2]) : 2000, off = args.Length > 3 ? int.Parse(args[3]) : 1000;
+            var plane = new PlaneHost(Vec3.Zero, new Vec3(0, 0, 1));
+            var c = new List<Vec3> { new Vec3(0, 0, 0.2), new Vec3(1.15, 0, 1.25) };
+            var r = new List<double> { 1.0, 0.5 };
+            string info;
+            var s = new FoamSolver(MobiusMesher.Build(c, r, 0.1, out info, plane), new SolverSettings()) { Host = plane };
+            s.SetTargetRadii(r);
+            Run(s, 600, "settle, no gravity");
+            Func<string> where = () =>
+            {
+                var cen = s.Centroids();
+                bool[] onHost; var piece = Contacts.Pieces(s.Mesh, out onHost);
+                bool foot = s.Mesh.T.Any(t => FoamMesh.IsSolid(t) && (t.Neg == 2 || t.Pos == 2));
+                return string.Format(CI, "small bubble centroid z {0:F3}{1}", cen[2].Z, foot ? " (touching the plane)" : "");
+            };
+            Console.WriteLine("  " + where());
+            s.S.Gravity = g;
+            for (int i = 0; i < on; i += 500) Run(s, 500, "gravity " + g);
+            Console.WriteLine("  with gravity: " + where());
+            s.S.Gravity = 0;
+            for (int i = 0; i < off; i += 500) Run(s, 500, "gravity off");
+            Console.WriteLine("  after gravity off: " + where() + "; " + FoamAnalysis.ContactAngles(s.Mesh));
+            return 0;
+        }
         if (cmd == "clean")
         {
             // Border cleanup on a recorded mesh: clean <mesh.obj> <cellSize> [iterations] [arcTol]

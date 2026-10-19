@@ -28,6 +28,7 @@
 //                             set it back to 0 once they've joined to get the exact equilibrium
 //   HostPlane : Plane         optional: a wet surface the bubbles can rest on (the side the Z axis
 //                             points to is air). Bubbles touching it become domes meeting it at 90 degrees
+//   Gravity   : double        film weight toward the host (or -Z): bubbles roll into valleys. 0 = off, ~0.02 gentle
 //   HostMesh  : Mesh          optional: same, any mesh (an arm, a form); normals point to the air.
 //                             HostPlane wins if both are connected. Changing the host rebuilds
 //   GatherTo  : Point3d       optional; not connected → the centre of the cluster
@@ -80,12 +81,13 @@ public class Script_Instance : GH_ScriptInstance
 
     private void RunScript(List<Point3d> Centers, List<double> Radii, double CellSize, bool Pack, bool Reset, bool Run,
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
-                           Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh,
+                           Point3d AddAt, double Gather, Point3d GatherTo, Plane HostPlane, Mesh HostMesh, double Gravity,
                            ref object Films, ref object Bubbles, ref object Borders, ref object Nodes,
                            ref object Pressures, ref object Info, ref object Caps, ref object Foam)
     {
         engine.Component = Component;
         engine.GrasshopperDocument = GrasshopperDocument;
+        engine.Gravity = Gravity;
         engine.Solve(Centers, Radii, CellSize, Pack, Reset, Run, Pull, Add, AddRadius, Pop, PopAt, AddAt, Gather, GatherTo,
                      HostPlane, HostMesh, ref Films, ref Bubbles, ref Borders, ref Nodes, ref Pressures, ref Info, ref Caps, ref Foam);
     }

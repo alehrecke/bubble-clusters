@@ -29,6 +29,7 @@ with the inputs below. Info's first line shows which build is loaded. The paste-
 | `GatherTo` | Point3d | Item (optional) |
 | `HostPlane` | Plane | Item (optional) |
 | `HostMesh` | Mesh | Item (optional) |
+| `Gravity` | double | Item (optional) |
 
 Outputs: `Films`, `Bubbles`, `Borders`, `Nodes`, `Pressures`, `Info`, `Caps`.
 
@@ -91,6 +92,13 @@ while `Run` is on:
   and the cluster relaxes to the exact equilibrium. Note: gathering toward a point makes a 3D clump, even if every bubble
   starts on a plane. A flat raft needs a surface for the bubbles to sit on (Phase 5).
 `Info` lists the bubble count, drags and the last few live changes. All live changes go into the run recording.
+
+## 3b2. Gravity (settling aid)
+`Gravity` gives the films a little weight, toward the host (or world -Z without one). Real soap films are too light for this to
+matter, so 0 (the default) is the exact foam. But bubbles resting on a neighbour's flank are neutrally balanced and can sit
+"hovering"; a gentle pull (~0.02) lets them roll into the valleys and onto the bed, and in tests the foam converged better. While
+it's on, films sag slightly and angles drift a few degrees; set it back to 0 for the final exact equilibrium (positions stay).
+Stronger values (0.05+) push harder than needed.
 
 ## 3c. Bubbles resting on a surface (Phase 5)
 Connect a plane to `HostPlane`, or any mesh to `HostMesh` (an arm, a table, a sculpted form). The side the plane's Z axis

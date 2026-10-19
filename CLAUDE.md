@@ -373,6 +373,10 @@ else resampled smooth chain; arcs get <= 10 deg per segment. Plugin `BorderCurve
 Polylines, Nodes, IsArc, Outer. Harness `clean <mesh.obj> <cell> [iters] [arcTol]`. Measured on run 190700 (572 borders, CellSize 0.3):
 564 (99%) within tolerance of an exact arc, median deviation 0.02 x CellSize (raw, unsmoothed: 0.04), worst 0.21; border ends at
 nodes coincide exactly. Next for fabrication: pipes with node swelling (real Plateau borders thicken toward nodes), closed solid.
+**2026-10-18 (build i): optional Gravity** (`SolverSettings.Gravity`, uniform force per film area toward the host / -Z, folded into
+ApplyPull; GH input `Gravity`, last; `BubbleEngine.Gravity`). Default 0 = unchanged. Harness `gravity <g>` (r 0.5 bubble on the flank of a
+dome): g 0 → hovers (z 0.86); g 0.02 → rolls down (0.64), and after g → 0 angles clean (2.5 deg, worst 4.8) and better converged than
+no-gravity; 0.05 / 0.1 → leftover outliers (worst 35-50 deg). Recommend 0.02 as a settling aid, then 0.
 Still open: true mesh-level T1 surgery (not needed so far); tiny bubbles near the grid limit still lose volume when they're in the event.
 UI reference for Phase 4: `llm-bubble/wiki/saharan-bubbles.md` "Interaction design" (tools as scene objects, capped drag, random pops).
 Speed plan (proposed to Alex 2026-10-15, not started): compiled core DLL/.gha (~6–8x), coarse mesh while interacting + refine when idle, then optionally

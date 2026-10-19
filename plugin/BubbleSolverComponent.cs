@@ -41,6 +41,7 @@ namespace BubbleClusters
             p.AddPointParameter("GatherTo", "GatherTo", "Gather target (not connected: the cluster centre, on the host if any).", GH_ParamAccess.item);
             p.AddPlaneParameter("HostPlane", "HostPlane", "A wet surface the bubbles rest on; its Z axis points to the air.", GH_ParamAccess.item);
             p.AddMeshParameter("HostMesh", "HostMesh", "A wet mesh the bubbles rest on; normals point to the air.", GH_ParamAccess.item);
+            p.AddNumberParameter("Gravity", "Gravity", "Film weight, toward the host (or -Z): helps bubbles roll into place. 0 = off (exact foam); ~0.02 gentle. Set back to 0 for exact angles.", GH_ParamAccess.item, 0);
             for (int i = 2; i < p.ParamCount; i++) p[i].Optional = true;
         }
 
@@ -69,6 +70,9 @@ namespace BubbleClusters
             DA.GetData(6, ref pull); DA.GetData(7, ref add); DA.GetData(8, ref addRadius); DA.GetData(9, ref pop);
             DA.GetData(10, ref popAt); DA.GetData(11, ref addAt); DA.GetData(12, ref gather); DA.GetData(13, ref gatherTo);
             DA.GetData(14, ref hostPlane); DA.GetData(15, ref hostMesh);
+            double gravity = 0;
+            DA.GetData(16, ref gravity);
+            engine.Gravity = gravity;
 
             engine.Component = this;
             engine.AlwaysOutput = true;

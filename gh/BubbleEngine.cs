@@ -24,7 +24,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-18h";
+    public const string Build = "2026-10-18i";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -215,6 +215,8 @@ public class BubbleEngine
     // default preview, so filled outputs don't draw twice. The paste-in script can't stop the default
     // preview, so it fills outputs only when wired (wire them before the run settles, or press Reset).
     public bool AlwaysOutput;
+    // Film weight (SolverSettings.Gravity), set by the front end before Solve. 0 = off.
+    public double Gravity;
 
     public void Solve(List<Point3d> Centers, List<double> Radii, double CellSize, bool Pack, bool Reset, bool Run,
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
@@ -274,6 +276,13 @@ public class BubbleEngine
         ApplyLive(run, Centers, Radii, Pull, Add, AddRadius, Pop, InputWired("PopAt") ? PopAt : Point3d.Unset,
                   InputWired("AddAt") ? AddAt : Point3d.Unset, Gather, InputWired("GatherTo") ? GatherTo : Point3d.Unset);
         UpdateAddAtPreview(run, InputWired("AddAt") ? AddAt : Point3d.Unset);
+        double gv = Math.Max(0, Gravity);
+        if (Math.Abs(gv - run.Solver.S.Gravity) > 1e-12)
+        {
+            run.Solver.S.Gravity = gv;
+            run.Event("gravity -> " + gv.ToString("G3", CultureInfo.InvariantCulture));
+            run.Unsettle();
+        }
 
         if (Run && !run.Settled)
         {
