@@ -166,6 +166,65 @@ public class Scene
         return fieldCorner[3 * s] * l0 + fieldCorner[3 * s + 1] * l1 + fieldCorner[3 * s + 2] * l2;
     }
 
+    // ---------- swirl (soap-film vortices) ----------
+    public bool SwirlOn;
+    double swirlAmount;
+    List<Vec3>[] vortexC; List<double>[] vortexR, vortexS;
+    Vec3[] waveK; double[] wavePhase;
+
+    // Vortices are seeded per film from the film's identity (its bubble pair), and live in 3D, so a film
+    // swirls the same way on every sheet it appears on (overview, specimen, context).
+    public void BuildSwirl(int seed, double amount, double noiseWavelength)
+    {
+        SwirlOn = amount > 0; swirlAmount = amount;
+        if (!SwirlOn) return;
+        int nf = FilmAxis.Length;
+        vortexC = new List<Vec3>[nf]; vortexR = new List<double>[nf]; vortexS = new List<double>[nf];
+        var area = new double[nf]; var tris = new List<int>[nf]; var key = new long[nf];
+        for (int f = 0; f < nf; f++) tris[f] = new List<int>();
+        for (int k = 0; k < Tris.Count; k++) { int f = FaceIdx[k]; area[f] += TriNormal(k).Length / 2; tris[f].Add(k); key[f] = Face[k]; }
+        for (int f = 0; f < nf; f++)
+        {
+            vortexC[f] = new List<Vec3>(); vortexR[f] = new List<double>(); vortexS[f] = new List<double>();
+            var r = new Random(unchecked(seed * 7919 + (int)(key[f] * 2654435761L % 1000003)));
+            double size = Math.Sqrt(area[f]);
+            int count = 1 + (int)(area[f] / (size * size * 0.35) * r.NextDouble() * 0.6) + (r.NextDouble() < 0.4 ? 1 : 0);
+            for (int i = 0; i < count; i++)
+            {
+                // A random point on the film (area-weighted triangle, random barycentric).
+                double pick = r.NextDouble() * area[f], acc = 0; int kk = tris[f][0];
+                foreach (int k in tris[f]) { acc += TriNormal(k).Length / 2; if (acc >= pick) { kk = k; break; } }
+                var t = M.T[Tris[kk]]; double u = r.NextDouble(), v = r.NextDouble(); if (u + v > 1) { u = 1 - u; v = 1 - v; }
+                vortexC[f].Add(M.V[t.A] + (M.V[t.B] - M.V[t.A]) * u + (M.V[t.C] - M.V[t.A]) * v);
+                vortexR[f].Add(size * (0.12 + 0.18 * r.NextDouble()));
+                vortexS[f].Add((r.NextDouble() < 0.5 ? -1 : 1) * (0.8 + 0.7 * r.NextDouble()));
+            }
+        }
+        var wr = new Random(seed * 31 + 5);
+        waveK = new Vec3[4]; wavePhase = new double[4];
+        for (int i = 0; i < 4; i++)
+        {
+            Vec3 d; do d = new Vec3(wr.NextDouble() * 2 - 1, wr.NextDouble() * 2 - 1, wr.NextDouble() * 2 - 1); while (d.LengthSq > 1 || d.LengthSq < 0.05);
+            waveK[i] = d.Normalized() * (2 * Math.PI / (noiseWavelength * (0.7 + 0.6 * wr.NextDouble())));
+            wavePhase[i] = wr.NextDouble() * 2 * Math.PI;
+        }
+    }
+
+    // Rotate the stroke direction t within the tangent plane (about n) by the swirl angle at pos.
+    public Vec3 Swirl(int s, Vec3 pos, Vec3 n, Vec3 t)
+    {
+        int f = FaceIdx[s];
+        double ang = 0;
+        for (int i = 0; i < vortexC[f].Count; i++)
+        {
+            double d2 = (pos - vortexC[f][i]).LengthSq, r2 = vortexR[f][i] * vortexR[f][i];
+            ang += vortexS[f][i] * 1.4 * Math.Exp(-d2 / r2);
+        }
+        double w = 0; for (int i = 0; i < 4; i++) w += Math.Sin(Vec3.Dot(waveK[i], pos) + wavePhase[i]);
+        ang = swirlAmount * (ang + 0.18 * w);
+        return (t * Math.Cos(ang) + Vec3.Cross(n, t) * Math.Sin(ang)).Normalized();
+    }
+
     public Vec3 TriNormal(int s)
     {
         var t = M.T[Tris[s]];

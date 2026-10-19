@@ -26,7 +26,7 @@ public static class Program
     {
         if (args.Length == 0)
         {
-            Console.WriteLine("usage: bubbleplot preview|edition --seed N [--style short|long|both] [--field light|facet|border|all] [--paper a4|a3] [--bubble K] [--count N] [--detail B]");
+            Console.WriteLine("usage: bubbleplot preview|edition --seed N [--style short|long|both] [--field light|facet|border|all] [--paper a4|a3] [--swirl 0..1] [--hidden solid|dash] [--bubble K] [--count N] [--detail B]");
             Console.WriteLine("       bubbleplot overviews --seeds a,b,c,d [--style short] [--field light]");
             return 1;
         }
@@ -37,7 +37,10 @@ public static class Program
         bool a3 = opt("paper", "a4") == "a3";
         var styles = style == "both" ? new[] { "short", "long" } : new[] { style };
         var fields = field == "all" ? new[] { "light", "facet", "border" } : new[] { field };
-        var variants = (from st in styles from f in fields select new { Style = st, Field = f, Tag = f == "light" ? st : st + "-" + f }).ToList();
+        double swirl = double.Parse(opt("swirl", "0"), CI);
+        string hidden = opt("hidden", null);
+        string extra = (swirl > 0 ? "-swirl" + (int)Math.Round(swirl * 100) : "") + (hidden != null ? "-hidden" + (hidden == "dash" ? "dash" : "") : "");
+        var variants = (from st in styles from f in fields select new { Style = st, Field = f, Tag = (f == "light" ? st : st + "-" + f) + extra }).ToList();
 
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "editions"));
         if (opt("out", null) != null) root = Path.GetFullPath(opt("out", null));
@@ -56,7 +59,7 @@ public static class Program
             var foams = seeds.Select(sd => { var e0 = settings(sd); return new { e = e0, s = Edition.Generate(e0, dir0, log) }; }).ToList();
             foreach (var va in variants)
             {
-                var hs = new HatchStyle { Short = va.Style == "short", Field = va.Field };
+                var hs = new HatchStyle { Short = va.Style == "short", Field = va.Field, Swirl = swirl, Hidden = hidden };
                 var tiles = new List<Plot>();
                 foreach (var f in foams)
                 {
@@ -89,7 +92,7 @@ public static class Program
         string prefix = a3 ? "a3_" : "";
         foreach (var va in variants)
         {
-            var hs = new HatchStyle { Short = va.Style == "short", Field = va.Field };
+            var hs = new HatchStyle { Short = va.Style == "short", Field = va.Field, Swirl = swirl, Hidden = hidden };
             if (a3) { e.SheetW = A3W; e.SheetH = A3H; } else { e.SheetW = 210; e.SheetH = 297; }
             var p = Edition.Overview(s, view, hs, e);
             var info = Edition.Write(p, dir, prefix + "overview_" + va.Tag, "Bubble cluster " + e.Seed + " (" + va.Tag + ")", e);

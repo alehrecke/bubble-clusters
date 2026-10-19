@@ -123,6 +123,7 @@ public static class Edition
         Light(sc);
         sc.Rasterize(e.RasterPxPerMm, p.Width, p.Height);
         if (st != null && st.Field == "border") sc.BuildBorderField();
+        if (st != null && st.Swirl > 0) sc.BuildSwirl(v.Seed, st.Swirl, 8 * s.TargetEdge);
         return sc;
     }
 
@@ -132,6 +133,7 @@ public static class Edition
         var sc = Frame(s, v, 0, OverviewFrame, p, e, st);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + 1)));
         p.Layer("outline").AddRange(Outlines(s, sc, 0));
+        if (st.Hidden != null) p.Layer("hidden").AddRange(Hidden(s, sc, 0, st.Hidden == "dash"));
         return p;
     }
 
@@ -141,6 +143,7 @@ public static class Edition
         var sc = Frame(s, v, k, SpecimenFrame, p, e, st);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + k)));
         p.Layer("outline").AddRange(Outlines(s, sc, k));
+        if (st.Hidden != null) p.Layer("hidden").AddRange(Hidden(s, sc, k, st.Hidden == "dash"));
         return p;
     }
 
@@ -153,6 +156,7 @@ public static class Edition
         var sc = Frame(s, v, k, OverviewFrame, p, e, st, fit);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + k)));
         p.Layer("outline").AddRange(Outlines(s, sc, k));
+        if (st.Hidden != null) p.Layer("hidden").AddRange(Hidden(s, sc, k, st.Hidden == "dash"));
         // The rest of the cluster in outline (its own hidden lines removed), not drawn over the featured bubble.
         var keep = new List<List<V2>>();
         foreach (var line in Outlines(s, all, 0))
@@ -212,6 +216,39 @@ public static class Edition
     }
 
     // Plateau borders (cleaned: exact arcs) of the drawn surface + its silhouette, hidden parts removed.
+    // Plateau borders BEHIND the drawn surface: for the overview the cluster's whole internal border network,
+    // for one bubble its back-side borders. A looser tolerance than the visible test leaves a small halo gap
+    // where a hidden line passes behind a visible one.
+    static List<List<V2>> Hidden(FoamSolver s, Scene sc, int bubble, bool dashed)
+    {
+        var borders = BorderClean.Clean(s.Mesh, s.TargetEdge, new BorderCleanSettings { Spacing = s.TargetEdge * 0.5, IncludeHost = false });
+        var lines = new List<List<Vec3>>();
+        foreach (var b in borders)
+        {
+            if (bubble > 0 && !b.Bubbles.Contains(bubble)) continue;
+            var pts = new List<Vec3>(b.Points);
+            if (b.Closed && pts.Count > 0) pts.Add(pts[0]);
+            lines.Add(pts);
+        }
+        var runs = Hatcher.VisibleRuns(sc, lines, 1.2 / sc.S, 0.6, true).Select(Smooth2).ToList();
+        if (!dashed) return runs;
+        var dashes = new List<List<V2>>();
+        foreach (var r in runs)
+        {
+            var pts = Densify(r, 0.1).ToList();
+            double along = 0; var cur = new List<V2>();
+            for (int i = 0; i < pts.Count; i++)
+            {
+                if (i > 0) along += (pts[i] - pts[i - 1]).Length;
+                bool on = along % 1.4 < 0.8;            // 0.8 mm dash, 0.6 mm gap
+                if (on) cur.Add(pts[i]);
+                else if (cur.Count > 0) { if (cur.Count >= 2) dashes.Add(cur); cur = new List<V2>(); }
+            }
+            if (cur.Count >= 2) dashes.Add(cur);
+        }
+        return dashes;
+    }
+
     static List<List<V2>> Outlines(FoamSolver s, Scene sc, int bubble)
     {
         var borders = BorderClean.Clean(s.Mesh, s.TargetEdge, new BorderCleanSettings { Spacing = s.TargetEdge * 0.5, IncludeHost = false });
@@ -252,7 +289,7 @@ public static class Edition
         Directory.CreateDirectory(dir);
         string svg = Path.Combine(dir, name + ".svg"), png = Path.Combine(dir, name + ".png");
         SheetIO.WriteSvg(p, svg, title);
-        SheetIO.WritePng(p, png, e.PreviewPxPerMm, new Dictionary<string, double> { { "context", 0.45 } });
+        SheetIO.WritePng(p, png, e.PreviewPxPerMm, new Dictionary<string, double> { { "context", 0.45 }, { "hidden", 0.5 } });
         double len = p.PenDownLength();
         int strokes = p.Strokes();
         return new Dictionary<string, object>

@@ -22,6 +22,11 @@ public class HatchStyle
     //   facet   rings around each film's own axis (concentric on every facet)
     //   border  inset rings parallel to each film's Plateau borders (level sets of distance to the border)
     public string Field = "light";
+    // Soap-film swirl: 0 = none, 1 = strong. Rotates the stroke direction within the film around a few
+    // soft vortices per film plus a gentle noise, so lines eddy like the thinning flows on a real film.
+    public double Swirl = 0;
+    // Hidden lines: null = none, "solid" or "dash": the Plateau borders behind the surface, own pen layer.
+    public string Hidden = null;
 }
 
 public static class Hatcher
@@ -73,6 +78,7 @@ public static class Hatcher
             }
             if (t.LengthSq < 1e-6) t = Vec3.Cross(n, sc.F);
             t = t.Normalized();
+            if (sc.SwirlOn) t = sc.Swirl(s, pos, n, t);
             double dx = Vec3.Dot(t, sc.R), dy = -Vec3.Dot(t, sc.U);
             double dl = Math.Sqrt(dx * dx + dy * dy);
             if (dl < 1e-6) { dx = 1; dy = 0; dl = 1; }
@@ -187,7 +193,7 @@ public static class Hatcher
     }
 
     // 3D polylines → visible 2D runs (hidden parts removed by the scene's depth buffer).
-    public static List<List<V2>> VisibleRuns(Scene sc, IEnumerable<List<Vec3>> lines, double epsWorld, double minLen = 0.3)
+    public static List<List<V2>> VisibleRuns(Scene sc, IEnumerable<List<Vec3>> lines, double epsWorld, double minLen = 0.3, bool hidden = false)
     {
         var res = new List<List<V2>>();
         foreach (var l in lines)
@@ -201,7 +207,7 @@ public static class Hatcher
                 for (int k = (i == 0 ? 0 : 1); k <= n; k++)
                 {
                     Vec3 p = a + (b - a) * ((double)k / n);
-                    if (sc.Visible(p, epsWorld)) run.Add(sc.Project(p));
+                    if (sc.Visible(p, epsWorld) != hidden) run.Add(sc.Project(p));
                     else { Flush(res, run, minLen); run = new List<V2>(); }
                 }
             }

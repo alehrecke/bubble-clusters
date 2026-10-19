@@ -30,6 +30,14 @@ Cut marks between tiles are on a separate `marks` layer.
 - `border`: inset rings parallel to each film's own Plateau borders (level sets of the distance to the border).
 - `facet`: concentric circles around each film's centroid.
 
+Details (combine freely with any field/style):
+- `--hidden solid|dash`: Plateau borders behind the surface on their own `hidden` layer (preview grey). On the
+  overview this is the cluster's whole internal border network (the X-ray of the foam); on a bubble sheet,
+  its back-side borders. A small halo gap is left where a hidden line passes behind a visible one.
+- `--swirl 0..1`: soap-film eddies. A few soft vortices per film plus a gentle noise rotate the stroke
+  direction within the surface (strokes still lie on the film and stop at its borders). Vortices are seeded
+  from the film's identity in 3D, so a film swirls the same way on every sheet. 0.5 = subtle, 1 = visible eddies.
+
 True curvature directions don't work here: soap films have constant mean curvature and are close to
 spherical caps, where every direction is a principal direction, so the "principal curvature" field is
 noise. `border` is what following the facet's shape means for these surfaces.
