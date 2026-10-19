@@ -20,7 +20,9 @@ public class EditionSettings
     public double PreviewPxPerMm = 5;
     public double RasterPxPerMm = 10;
     public double Inkmm_s = 25;        // pen-down speed for the time estimate
-    public double SheetW = 210, SheetH = 297;   // one sheet (A4); A5 tiles for 4-up A3 pages
+    public double SheetW = 210, SheetH = 297;
+    public string Light = "classic";   // classic (soft Lambert) | dramatic (raking key light, cast shadows, ambient occlusion)
+    public bool Outline = true;        // Plateau-border arcs + silhouettes   // one sheet (A4); A5 tiles for 4-up A3 pages
 }
 
 public static class Edition
@@ -123,8 +125,28 @@ public static class Edition
         Light(sc);
         sc.Rasterize(e.RasterPxPerMm, p.Width, p.Height);
         if (st != null && st.Field == "border") sc.BuildBorderField();
+        if (st != null && e.Light == "dramatic")
+            Lighting.Setup(sc, (sc.R * -0.72 + sc.U * 0.5 + sc.F * -0.48).Normalized(), new LightSettings());
         if (st != null && st.Swirl > 0) sc.BuildSwirl(v.Seed, st.Swirl, 8 * s.TargetEdge);
         return sc;
+    }
+
+    // Debug: the tone (darkness) the hatcher sees over the overview, as an image.
+    public static void ToneImage(FoamSolver s, View v, EditionSettings e, string path, double pxPerMm = 4)
+    {
+        var p = NewPlot(e);
+        var sc = Frame(s, v, 0, OverviewFrame, p, e, new HatchStyle());
+        int w = (int)(p.Width * pxPerMm), h = (int)(p.Height * pxPerMm);
+        var ink = new float[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                var q = new V2((x + 0.5) / pxPerMm, (y + 0.5) / pxPerMm);
+                int si; Vec3 pos, n;
+                if (!sc.Query(q, out si, out pos, out n)) continue;
+                ink[y * w + x] = (float)(sc.Lit != null ? 1 - sc.Lit(si, q, pos, n) : 1 - Math.Max(0, Vec3.Dot(n, sc.Light)));
+            }
+        SheetIO.WriteInk(ink, w, h, path);
     }
 
     public static Plot Overview(FoamSolver s, View v, HatchStyle st, EditionSettings e)
@@ -132,7 +154,7 @@ public static class Edition
         var p = NewPlot(e);
         var sc = Frame(s, v, 0, OverviewFrame, p, e, st);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + 1)));
-        p.Layer("outline").AddRange(Outlines(s, sc, 0));
+        if (e.Outline) p.Layer("outline").AddRange(Outlines(s, sc, 0));
         if (st.Hidden != null) p.Layer("hidden").AddRange(Hidden(s, sc, 0, st.Hidden == "dash"));
         return p;
     }
@@ -142,7 +164,7 @@ public static class Edition
         var p = NewPlot(e);
         var sc = Frame(s, v, k, SpecimenFrame, p, e, st);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + k)));
-        p.Layer("outline").AddRange(Outlines(s, sc, k));
+        if (e.Outline) p.Layer("outline").AddRange(Outlines(s, sc, k));
         if (st.Hidden != null) p.Layer("hidden").AddRange(Hidden(s, sc, k, st.Hidden == "dash"));
         return p;
     }
@@ -155,7 +177,7 @@ public static class Edition
         var fit = all.Tris.Select(i => s.Mesh.V[s.Mesh.T[i].A]);
         var sc = Frame(s, v, k, OverviewFrame, p, e, st, fit);
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + k)));
-        p.Layer("outline").AddRange(Outlines(s, sc, k));
+        if (e.Outline) p.Layer("outline").AddRange(Outlines(s, sc, k));
         if (st.Hidden != null) p.Layer("hidden").AddRange(Hidden(s, sc, k, st.Hidden == "dash"));
         // The rest of the cluster in outline (its own hidden lines removed), not drawn over the featured bubble.
         var keep = new List<List<V2>>();

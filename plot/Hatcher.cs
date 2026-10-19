@@ -27,6 +27,14 @@ public class HatchStyle
     public double Swirl = 0;
     // Hidden lines: null = none, "solid" or "dash": the Plateau borders behind the surface, own pen layer.
     public string Hidden = null;
+    // Mixed lengths: no length rule; a stroke runs until it comes within the local spacing of another
+    // stroke (or turns sharply / leaves its film), so flat tones grow long lines and gradients short ones.
+    public bool Mixed = false;
+    // Steep tone curve: spacing = HyperMin / (darkness), so the darks close up to near-solid black and the
+    // lights open up fast (cut off at SepMax). Used with the dramatic lighting.
+    public bool Hyper = false;
+    public double HyperMin = 0.33;
+    public double HyperMax = 6.0;
 }
 
 public static class Hatcher
@@ -34,7 +42,7 @@ public static class Hatcher
     public static List<List<V2>> Hatch(Scene sc, HatchStyle st, Func<int, Vec3> axisOf, Random rng)
     {
         var strokes = new List<List<V2>>();
-        double cell = st.SepMin * 0.5;
+        double cell = Math.Min(st.SepMin, st.HyperMin) * 0.5;
         var grid = new Dictionary<long, List<V2>>(LongKey.Comparer);
         Func<V2, long> key = p => unchecked(((long)Math.Floor(p.X / cell) * 73856093L) ^ ((long)Math.Floor(p.Y / cell) * 19349663L));
 
@@ -43,11 +51,16 @@ public static class Hatcher
         {
             int s; Vec3 pos, n;
             if (!sc.Query(q, out s, out pos, out n)) return null;
-            double lam = Math.Max(0, Vec3.Dot(n, sc.Light));
-            double tone = 1 - (st.Ambient + (1 - st.Ambient) * lam);
-            // Faces turned edge-on to the viewer read darker (gives the solids their rounded edges).
-            double facing = Math.Abs(Vec3.Dot(n, sc.F));
-            tone = Math.Min(1, tone + 0.25 * (1 - facing) * (1 - facing));
+            double tone;
+            if (sc.Lit != null) tone = 1 - sc.Lit(s, q, pos, n);
+            else
+            {
+                double lam = Math.Max(0, Vec3.Dot(n, sc.Light));
+                tone = 1 - (st.Ambient + (1 - st.Ambient) * lam);
+                // Faces turned edge-on to the viewer read darker (gives the solids their rounded edges).
+                double facing = Math.Abs(Vec3.Dot(n, sc.F));
+                tone = Math.Min(1, tone + 0.25 * (1 - facing) * (1 - facing));
+            }
             // Stroke direction: rings around the bubble's light axis (t = n x A, A ~ the light direction), i.e.
             // along lines of equal brightness, as engravers hatch a sphere. Any such field has two singular
             // points (n = +A, -A): +A is the highlight, which gets no strokes, and -A faces away from the
@@ -84,8 +97,10 @@ public static class Hatcher
             if (dl < 1e-6) { dx = 1; dy = 0; dl = 1; }
             return new[] { tone, dx / dl, dy / dl, s, (double)sc.FaceIdx[s], ok };
         };
+        double sepMax = st.Hyper ? st.HyperMax : st.SepMax;
         Func<double, double> sepOf = tone =>
         {
+            if (st.Hyper) return Math.Min(st.HyperMax * 1.5, st.HyperMin / (Math.Max(0, tone) + 0.001));
             double d = Math.Max(0, Math.Min(1, (tone - st.Highlight) / (1 - st.Highlight)));
             d = Math.Pow(d, st.Gamma);
             return st.SepMax + (st.SepMin - st.SepMax) * d;
@@ -116,6 +131,35 @@ public static class Hatcher
         };
 
         // Trace from a seed in one direction (sign), staying on the seed's film.
+        // The stroke being traced, by signed arc length from its seed: a stroke must not come back onto itself
+        // (with unlimited length it would otherwise loop around small rings and ink them solid).
+        var self = new Dictionary<long, List<KeyValuePair<V2, double>>>(LongKey.Comparer);
+        Func<V2, double, double, bool> selfFree = (p, arc, dist) =>
+        {
+            long cx = (long)Math.Floor(p.X / cell), cy = (long)Math.Floor(p.Y / cell);
+            int r = (int)Math.Ceiling(dist / cell);
+            double d2 = dist * dist, gap = 2.5 * dist + 2 * st.Step;
+            for (long gy = cy - r; gy <= cy + r; gy++)
+                for (long gx = cx - r; gx <= cx + r; gx++)
+                {
+                    List<KeyValuePair<V2, double>> l;
+                    if (!self.TryGetValue(unchecked((gx * 73856093L) ^ (gy * 19349663L)), out l)) continue;
+                    foreach (var o in l)
+                    {
+                        if (Math.Abs(o.Value - arc) < gap) continue;
+                        double ex = o.Key.X - p.X, ey = o.Key.Y - p.Y;
+                        if (ex * ex + ey * ey < d2) return false;
+                    }
+                }
+            return true;
+        };
+        Action<V2, double> selfAdd = (p, arc) =>
+        {
+            long k = key(p); List<KeyValuePair<V2, double>> l;
+            if (!self.TryGetValue(k, out l)) { l = new List<KeyValuePair<V2, double>>(2); self[k] = l; }
+            l.Add(new KeyValuePair<V2, double>(p, arc));
+        };
+
         Func<V2, double, double, double, List<V2>> trace = (seed, sign, maxLen, faceId) =>
         {
             var pts = new List<V2>();
@@ -134,8 +178,11 @@ public static class Hatcher
                 var d2 = new V2(b[1], b[2]); if (d2.X * d.X + d2.Y * d.Y < 0) d2 = d2 * -1;
                 var next = p + d2 * st.Step;
                 double sep = sepOf(a[0]);
-                if (sep > st.SepMax * 1.01 || !free(next, 0.5 * sep)) break;   // highlight, or too close to another stroke
+                double fr = (st.Mixed ? 0.95 : 0.5) * sep;
+                if (sep > sepMax * 1.01 || !free(next, fr)) break;   // highlight, or too close to another stroke
+                if (!selfFree(next, sign * (len + st.Step), fr)) break;
                 pts.Add(next); p = next; prevDir = d2; len += st.Step;
+                selfAdd(next, sign * len);
             }
             return pts;
         };
@@ -159,10 +206,11 @@ public static class Hatcher
             var a = sample(q);
             if (a == null || a[5] < 0.5) continue;
             double sep = sepOf(a[0]);
-            if (sep > st.SepMax * 1.01) continue;
+            if (sep > sepMax * 1.01) continue;
             if (!free(q, sep)) continue;
             double faceId = a[4];
-            double maxLen = st.Short ? st.DashMin + rng.NextDouble() * (st.DashMax - st.DashMin) : st.MaxLength;
+            double maxLen = st.Mixed ? 1000 : st.Short ? st.DashMin + rng.NextDouble() * (st.DashMax - st.DashMin) : st.MaxLength;
+            self.Clear(); selfAdd(q, 0);
             var fw = trace(q, 1, maxLen / 2, faceId);
             var bw = trace(q, -1, maxLen / 2, faceId);
             var line = new List<V2>(bw.Count + fw.Count + 1);
@@ -170,7 +218,7 @@ public static class Hatcher
             line.Add(q);
             line.AddRange(fw);
             double L = 0; for (int i = 1; i < line.Count; i++) L += (line[i] - line[i - 1]).Length;
-            if (L < (st.Short ? 0.4 : 1.5)) continue;
+            if (L < (st.Short ? 0.4 : st.Mixed ? 0.9 : 1.5)) continue;
             commit(line);
             // New seeds beside the stroke (one separation away), and for dashes, beyond its ends.
             for (int i = 0; i < line.Count; i += Math.Max(1, (int)(sep / st.Step / 2)))

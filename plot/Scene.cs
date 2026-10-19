@@ -155,6 +155,21 @@ public class Scene
 
     // Interpolated border field at a sheet point on surface triangle s. Its length drops below 1 where
     // the corners disagree, i.e. on the facet's medial axis, where the inset rings meet.
+    // Brightness override (0 black .. 1 paper) installed by Lighting; null = the classic Lambert tone.
+    public Func<int, V2, Vec3, Vec3, double> Lit;
+    public Vec3 CornerNormal(int c) { return vn[c]; }
+
+    // Barycentric interpolation of a per-corner value at a sheet point on surface triangle s.
+    public double InterpCorner(double[] a, int s, V2 q)
+    {
+        var t = M.T[Tris[s]];
+        V2 pa = proj[t.A], pb = proj[t.B], pc = proj[t.C];
+        double den = (pb.Y - pc.Y) * (pa.X - pc.X) + (pc.X - pb.X) * (pa.Y - pc.Y);
+        double l0 = ((pb.Y - pc.Y) * (q.X - pc.X) + (pc.X - pb.X) * (q.Y - pc.Y)) / den;
+        double l1 = ((pc.Y - pa.Y) * (q.X - pc.X) + (pa.X - pc.X) * (q.Y - pc.Y)) / den;
+        return a[3 * s] * l0 + a[3 * s + 1] * l1 + a[3 * s + 2] * (1 - l0 - l1);
+    }
+
     public Vec3 FieldAt(int s, V2 q)
     {
         var t = M.T[Tris[s]];

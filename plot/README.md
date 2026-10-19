@@ -38,6 +38,20 @@ Details (combine freely with any field/style):
   direction within the surface (strokes still lie on the film and stop at its borders). Vortices are seeded
   from the film's identity in 3D, so a film swirls the same way on every sheet. 0.5 = subtle, 1 = visible eddies.
 
+Dramatic lighting and mixed stroke lengths (after the look of Piter Pasma's ray-hatched plots; our own
+implementation of the ideas, none of his code):
+- `--light dramatic`: a low key light from the front-left with real cast shadows (shadow map from the light,
+  soft edges) plus ambient occlusion (depth maps from 64 directions), so bubbles shadow each other and the
+  creases between them go dark. Spacing follows a steep curve, spacing = 0.33 mm / darkness, so the darks close
+  up to near-solid and the lights open fast (nothing past 6 mm). `bubbleplot tone --seed N --light dramatic`
+  writes the tone image the hatcher sees (useful when tuning `LightSettings` in Lighting.cs).
+- `--style mixed`: no length rule. A stroke runs until it comes within the local spacing of another stroke,
+  turns sharply, leaves its film, or would come back onto itself. Long lines grow in even tones, short ones in
+  gradients and at the light/shadow threshold.
+- `--outline off`: no border arcs or silhouettes; edges show only through tone (lit edges dissolve into the paper).
+
+Best so far: `--style mixed --field border --light dramatic` (optionally `--outline off`).
+
 True curvature directions don't work here: soap films have constant mean curvature and are close to
 spherical caps, where every direction is a principal direction, so the "principal curvature" field is
 noise. `border` is what following the facet's shape means for these surfaces.

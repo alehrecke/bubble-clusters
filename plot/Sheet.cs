@@ -109,6 +109,12 @@ public static class SheetIO
                 for (int i = 1; i < s.Count; i++)
                     DrawLine(ink, w, h, s[i - 1] * pxPerMm, s[i] * pxPerMm, Math.Max(0.6, p.PenWidth * pxPerMm), (float)strength);
         }
+        WriteInk(ink, w, h, path);
+    }
+
+    // Coverage image (0 paper .. 1 ink) as PNG.
+    public static void WriteInk(float[] ink, int w, int h, string path)
+    {
         // Paper (243, 238, 226), ink (28, 26, 24).
         var raw = new byte[h * (1 + w * 3)];
         int o = 0;

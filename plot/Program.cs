@@ -26,7 +26,7 @@ public static class Program
     {
         if (args.Length == 0)
         {
-            Console.WriteLine("usage: bubbleplot preview|edition --seed N [--style short|long|both] [--field light|facet|border|all] [--paper a4|a3] [--swirl 0..1] [--hidden solid|dash] [--bubble K] [--count N] [--detail B]");
+            Console.WriteLine("usage: bubbleplot preview|edition --seed N [--style short|long|both] [--field light|facet|border|all] [--paper a4|a3] [--swirl 0..1] [--hidden solid|dash] [--light classic|dramatic] [--outline on|off] [--bubble K] [--count N] [--detail B]");
             Console.WriteLine("       bubbleplot overviews --seeds a,b,c,d [--style short] [--field light]");
             return 1;
         }
@@ -35,11 +35,14 @@ public static class Program
         string style = opt("style", cmd == "preview" ? "both" : "short");
         string field = opt("field", "light");
         bool a3 = opt("paper", "a4") == "a3";
-        var styles = style == "both" ? new[] { "short", "long" } : new[] { style };
+        var styles = style == "both" ? new[] { "short", "long" } : style == "all" ? new[] { "short", "long", "mixed" } : new[] { style };
+        string light = opt("light", "classic");
+        bool outline = opt("outline", "on") != "off";
         var fields = field == "all" ? new[] { "light", "facet", "border" } : new[] { field };
         double swirl = double.Parse(opt("swirl", "0"), CI);
         string hidden = opt("hidden", null);
-        string extra = (swirl > 0 ? "-swirl" + (int)Math.Round(swirl * 100) : "") + (hidden != null ? "-hidden" + (hidden == "dash" ? "dash" : "") : "");
+        string extra = (swirl > 0 ? "-swirl" + (int)Math.Round(swirl * 100) : "") + (hidden != null ? "-hidden" + (hidden == "dash" ? "dash" : "") : "")
+                     + (light == "dramatic" ? "-dramatic" : "") + (outline ? "" : "-nooutline");
         var variants = (from st in styles from f in fields select new { Style = st, Field = f, Tag = (f == "light" ? st : st + "-" + f) + extra }).ToList();
 
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "editions"));
@@ -49,6 +52,7 @@ public static class Program
         Func<int, EditionSettings> settings = seed => new EditionSettings
         {
             Seed = seed, Count = int.Parse(opt("count", "0")), DetailBatches = int.Parse(opt("detail", "0")),
+            Light = light, Outline = outline,
         };
 
         if (cmd == "overviews")
@@ -59,7 +63,7 @@ public static class Program
             var foams = seeds.Select(sd => { var e0 = settings(sd); return new { e = e0, s = Edition.Generate(e0, dir0, log) }; }).ToList();
             foreach (var va in variants)
             {
-                var hs = new HatchStyle { Short = va.Style == "short", Field = va.Field, Swirl = swirl, Hidden = hidden };
+                var hs = new HatchStyle { Short = va.Style == "short", Mixed = va.Style == "mixed", Hyper = light == "dramatic", Field = va.Field, Swirl = swirl, Hidden = hidden };
                 var tiles = new List<Plot>();
                 foreach (var f in foams)
                 {
@@ -79,6 +83,7 @@ public static class Program
         Directory.CreateDirectory(dir);
         var s = Edition.Generate(e, dir, log);
         var view = Edition.MakeView(e.Seed);
+        if (cmd == "tone") { Edition.ToneImage(s, view, e, Path.Combine(dir, "tone_" + e.Light + ".png")); log("tone image written"); return 0; }
         var vol = s.Mesh.Volumes();
         var bubbles = Enumerable.Range(1, s.Mesh.BubbleCount).Where(k => !s.IsDead(k) && vol[k] > 0).ToList();
         var manifest = new Dictionary<string, object>
@@ -92,7 +97,7 @@ public static class Program
         string prefix = a3 ? "a3_" : "";
         foreach (var va in variants)
         {
-            var hs = new HatchStyle { Short = va.Style == "short", Field = va.Field, Swirl = swirl, Hidden = hidden };
+            var hs = new HatchStyle { Short = va.Style == "short", Mixed = va.Style == "mixed", Hyper = light == "dramatic", Field = va.Field, Swirl = swirl, Hidden = hidden };
             if (a3) { e.SheetW = A3W; e.SheetH = A3H; } else { e.SheetW = 210; e.SheetH = 297; }
             var p = Edition.Overview(s, view, hs, e);
             var info = Edition.Write(p, dir, prefix + "overview_" + va.Tag, "Bubble cluster " + e.Seed + " (" + va.Tag + ")", e);
