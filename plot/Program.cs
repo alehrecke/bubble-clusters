@@ -53,6 +53,7 @@ public static class Program
         {
             Seed = seed, Count = int.Parse(opt("count", "0")), DetailBatches = int.Parse(opt("detail", "0")),
             Light = light, Outline = outline,
+            RMin = double.Parse(opt("rmin", "0.3"), CI), RMax = double.Parse(opt("rmax", "1.9"), CI),
         };
 
         if (cmd == "overviews")

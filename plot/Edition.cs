@@ -14,8 +14,12 @@ using System.Text;
 public class EditionSettings
 {
     public int Seed = 1;
-    public int Count = 0;              // bubbles (0 = random 9..15)
-    public double RMin = 0.5, RMax = 1.6;
+    public int Count = 0;              // bubbles (0 = random 16..26)
+    // Radii: RMin..RMax, skewed toward small by SizeSkew (>1 = more small bubbles, a few big ones).
+    // (Before 2026-10-18 evening: 9..15 bubbles, 0.5..1.6, skew 1.6, 60k triangles; old seeds look different now.)
+    public double RMin = 0.3, RMax = 1.9, SizeSkew = 2.2;
+    public int TriangleBudget = 90000;
+    public bool PlotterCopy = true;    // also write *_plotter-landscape.svg for portrait sheets
     public int DetailBatches = 0;      // Border Detail batches after relaxing (0 = none)
     public double PreviewPxPerMm = 5;
     public double RasterPxPerMm = 10;
@@ -33,9 +37,9 @@ public static class Edition
     public static FoamSolver Generate(EditionSettings e, string cacheDir, Action<string> log)
     {
         var rng = new Random(e.Seed);
-        int n = e.Count > 0 ? e.Count : rng.Next(9, 16);
+        int n = e.Count > 0 ? e.Count : rng.Next(16, 27);
         var r = new List<double>(); var c = new List<Vec3>();
-        for (int i = 0; i < n; i++) r.Add(e.RMin + (e.RMax - e.RMin) * Math.Pow(rng.NextDouble(), 1.6));
+        for (int i = 0; i < n; i++) r.Add(e.RMin + (e.RMax - e.RMin) * Math.Pow(rng.NextDouble(), e.SizeSkew));
         double R0 = 0.9 * Math.Pow(n, 1.0 / 3) * r.Average();
         for (int i = 0; i < n; i++)
         {
@@ -46,7 +50,7 @@ public static class Edition
         ClusterPacker.Pack(c, r, 1000, 0.01);
         // Cell size: about a fifth of the smallest radius, coarser if the mesh would get too big.
         double area = r.Sum(x => 4 * Math.PI * x * x);
-        double h = Math.Max(r.Min() / 5, Math.Sqrt(area / (0.433 * 60000)));
+        double h = Math.Max(r.Min() / 5, Math.Sqrt(area / (0.433 * e.TriangleBudget)));
         string objPath = Path.Combine(cacheDir, "cluster.obj"), radPath = Path.Combine(cacheDir, "cluster.txt");
         string info;
         var mesh = MobiusMesher.Build(c, r, h, out info);
@@ -311,6 +315,8 @@ public static class Edition
         Directory.CreateDirectory(dir);
         string svg = Path.Combine(dir, name + ".svg"), png = Path.Combine(dir, name + ".png");
         SheetIO.WriteSvg(p, svg, title);
+        if (e.PlotterCopy && p.Height > p.Width)
+            SheetIO.WriteSvg(SheetIO.Rotated(p), Path.Combine(dir, name + "_plotter-landscape.svg"), title + " [rotated for AxiDraw A3, load paper landscape]");
         SheetIO.WritePng(p, png, e.PreviewPxPerMm, new Dictionary<string, double> { { "context", 0.45 }, { "hidden", 0.5 } });
         double len = p.PenDownLength();
         int strokes = p.Strokes();

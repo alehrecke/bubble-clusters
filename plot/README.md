@@ -50,6 +50,16 @@ implementation of the ideas, none of his code):
   gradients and at the light/shadow threshold.
 - `--outline off`: no border arcs or silhouettes; edges show only through tone (lit edges dissolve into the paper).
 
+Plotting on the AxiDraw V3/A3 (draw area 430 x 297, landscape): every portrait sheet also gets a
+`*_plotter-landscape.svg`, the same drawing turned 90 degrees. Load the A3 paper landscape; the top of the
+drawing is on the left. The Pi's `~/axidraw_conf.py` must say `model = 2`, otherwise axicli assumes the A4
+machine and clips at 300 x 218 mm (fixed on 2026-10-18). Send with
+`Personal/Practice/Experiments/raspi-plotter/scripts/send-plot.ps1 <file>_plotter-landscape.svg`.
+
+Cluster generator (since 2026-10-18 evening): 16-26 bubbles, radii 0.3-1.9 skewed toward small (`SizeSkew` 2.2),
+90k-triangle budget; `--rmin/--rmax` override. Old seeds no longer reproduce the earlier clusters.
+First plot run: seed 2614, `--paper a3 --style mixed --field border --light dramatic` (+ a `--swirl 1` set).
+
 Best so far: `--style mixed --field border --light dramatic` (optionally `--outline off`).
 
 True curvature directions don't work here: soap films have constant mean curvature and are close to

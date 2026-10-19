@@ -112,6 +112,16 @@ public static class SheetIO
         WriteInk(ink, w, h, path);
     }
 
+    // The sheet turned 90 degrees (portrait -> landscape) for a plotter whose long axis is X. Load the paper
+    // landscape; the drawing comes out portrait when the sheet is turned back (top of the drawing on the left).
+    public static Plot Rotated(Plot p)
+    {
+        var r = new Plot { Width = p.Height, Height = p.Width, PenWidth = p.PenWidth };
+        foreach (var name in p.LayerOrder)
+            r.Layer(name).AddRange(p.Layers[name].Select(l => l.Select(q => new V2(q.Y, p.Width - q.X)).ToList()));
+        return r;
+    }
+
     // Coverage image (0 paper .. 1 ink) as PNG.
     public static void WriteInk(float[] ink, int w, int h, string path)
     {
