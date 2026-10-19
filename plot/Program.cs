@@ -12,6 +12,7 @@ using System.Linq;
 //   bubbleplot edition --seed 4721 [--style short] [--field light] [--paper a4|a3] [--count N] [--detail B]
 //       everything: overview, a specimen and a context sheet for every bubble, manifest.json
 //       --paper a3: the bubble sheets come 4-up on A3 pages (each tile an A5 sheet), the overview as one A3 sheet
+//       --tiles 9: 9-up instead (3x3 tiles, 99x140 mm);  --density f: hatching f times denser (any command)
 //   bubbleplot overviews --seeds 11,12,13,14 [--style short] [--field light]
 //       four clusters' overviews 4-up on one A3 page
 //
@@ -35,6 +36,17 @@ public static class Program
         string style = opt("style", cmd == "preview" ? "both" : "short");
         string field = opt("field", "light");
         bool a3 = opt("paper", "a4") == "a3";
+        // --tiles 4|9: bubble sheets per A3 page (2x2 A5 tiles or 3x3 tiles of 99x140 mm).
+        int perSide = opt("tiles", "4") == "9" ? 3 : 2, perPage = perSide * perSide;
+        // --density f: hatching lines f times closer (all spacings / f); darkest spacing floored at the pen width.
+        double density = double.Parse(opt("density", "1"), CI);
+        Func<HatchStyle, HatchStyle> dense = h =>
+        {
+            if (density == 1) return h;
+            h.SepMin = Math.Max(0.3, h.SepMin / density); h.SepMax /= density;
+            h.HyperMin = Math.Max(0.3, h.HyperMin / density); h.HyperMax /= density;
+            return h;
+        };
         var styles = style == "both" ? new[] { "short", "long" } : style == "all" ? new[] { "short", "long", "mixed" } : new[] { style };
         string light = opt("light", "classic");
         bool outline = opt("outline", "on") != "off";
@@ -42,7 +54,8 @@ public static class Program
         double swirl = double.Parse(opt("swirl", "0"), CI);
         string hidden = opt("hidden", null);
         string extra = (swirl > 0 ? "-swirl" + (int)Math.Round(swirl * 100) : "") + (hidden != null ? "-hidden" + (hidden == "dash" ? "dash" : "") : "")
-                     + (light == "dramatic" ? "-dramatic" : "") + (outline ? "" : "-nooutline");
+                     + (light == "dramatic" ? "-dramatic" : "") + (outline ? "" : "-nooutline")
+                     + (opt("density", "1") != "1" ? "-dense" + opt("density", "1") : "");
         var variants = (from st in styles from f in fields select new { Style = st, Field = f, Tag = (f == "light" ? st : st + "-" + f) + extra }).ToList();
 
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "editions"));
@@ -64,7 +77,7 @@ public static class Program
             var foams = seeds.Select(sd => { var e0 = settings(sd); return new { e = e0, s = Edition.Generate(e0, dir0, log) }; }).ToList();
             foreach (var va in variants)
             {
-                var hs = new HatchStyle { Short = va.Style == "short", Mixed = va.Style == "mixed", Hyper = light == "dramatic", Field = va.Field, Swirl = swirl, Hidden = hidden };
+                var hs = dense(new HatchStyle { Short = va.Style == "short", Mixed = va.Style == "mixed", Hyper = light == "dramatic", Field = va.Field, Swirl = swirl, Hidden = hidden });
                 var tiles = new List<Plot>();
                 foreach (var f in foams)
                 {
@@ -109,13 +122,14 @@ public static class Program
             { "seed", e.Seed }, { "bubbles", bubbles.Count },
             { "radii", bubbles.Select(k => Math.Round(s.DesiredRadius(k), 3)).ToList() },
             { "view", new Dictionary<string, object> { { "azimuthDeg", Math.Round(view.Azimuth * 180 / Math.PI, 1) }, { "elevationDeg", Math.Round(view.Elevation * 180 / Math.PI, 1) } } },
-            { "sheet", a3 ? "A3 portrait 297x420 mm: overview full sheet, bubble sheets 4-up (A5 tiles); pen 0.3 mm" : "A4 portrait 210x297 mm, pen 0.3 mm" },
+            { "sheet", a3 ? "A3 portrait 297x420 mm: overview full sheet, bubble sheets " + perPage + "-up; pen 0.3 mm" : "A4 portrait 210x297 mm, pen 0.3 mm" },
+            { "density", density },
         };
         var sheets = new List<object>();
         string prefix = a3 ? "a3_" : "";
         foreach (var va in variants)
         {
-            var hs = new HatchStyle { Short = va.Style == "short", Mixed = va.Style == "mixed", Hyper = light == "dramatic", Field = va.Field, Swirl = swirl, Hidden = hidden };
+            var hs = dense(new HatchStyle { Short = va.Style == "short", Mixed = va.Style == "mixed", Hyper = light == "dramatic", Field = va.Field, Swirl = swirl, Hidden = hidden });
             if (a3) { e.SheetW = A3W; e.SheetH = A3H; } else { e.SheetW = 210; e.SheetH = 297; }
             var p = Edition.Overview(s, view, hs, e);
             var info = Edition.Write(p, dir, prefix + "overview_" + va.Tag, "Bubble cluster " + e.Seed + " (" + va.Tag + ")", e);
@@ -125,7 +139,7 @@ public static class Program
             var which = cmd == "preview"
                 ? new List<int> { int.Parse(opt("bubble", (featured > 0 ? featured : bubbles.OrderByDescending(k => s.DesiredRadius(k)).Skip(1).First()).ToString(CI))) }
                 : bubbles;
-            if (a3) { e.SheetW = A3W / 2; e.SheetH = A3H / 2; }
+            if (a3) { e.SheetW = A3W / perSide; e.SheetH = A3H / perSide; }
             var spec = new List<Plot>(); var ctx = new List<Plot>(); var tags = new List<string>();
             int num = 0;
             foreach (int k in which)
@@ -145,14 +159,14 @@ public static class Program
             }
             if (a3)
             {
-                // 4-up pages, bubbles in order: page 1 = bubbles 01-04 (left to right, top to bottom), ...
+                // 4- or 9-up pages, bubbles in order: page 1 = the first bubbles (left to right, top to bottom), ...
                 e.SheetW = A3W; e.SheetH = A3H;
                 foreach (var series in new[] { new { Name = "specimen", Tiles = spec }, new { Name = "context", Tiles = ctx } })
-                    for (int pg = 0; pg * 4 < series.Tiles.Count; pg++)
+                    for (int pg = 0; pg * perPage < series.Tiles.Count; pg++)
                     {
-                        var group = series.Tiles.Skip(pg * 4).Take(4).ToList();
-                        var groupTags = tags.Skip(pg * 4).Take(4).ToList();
-                        var page = Edition.Tile(group, A3W, A3H, 2, 2);
+                        var group = series.Tiles.Skip(pg * perPage).Take(perPage).ToList();
+                        var groupTags = tags.Skip(pg * perPage).Take(perPage).ToList();
+                        var page = Edition.Tile(group, A3W, A3H, perSide, perSide);
                         var pi = Edition.Write(page, Path.Combine(dir, "a3_" + series.Name + "_" + va.Tag), "b" + e.Seed + "_" + series.Name + "_p" + (pg + 1).ToString("D2", CI) + "_" + va.Tag,
                                                "Cluster " + e.Seed + ", bubbles " + string.Join(" ", groupTags) + " (" + series.Name + ", " + va.Tag + ")", e);
                         pi["kind"] = series.Name + " page"; pi["style"] = va.Tag; pi["bubbles"] = groupTags; sheets.Add(pi);

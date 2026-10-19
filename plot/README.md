@@ -20,6 +20,10 @@ bubbleplot overviews --seeds 4721,1093,2207,3318            # four clusters on o
 bubbleplot preview --seed 4721 --style short --field all    # compare the three direction fields
 ```
 
+`--tiles 9` (with `--paper a3`): bubble sheets 9-up (3x3 tiles of 99x140 mm) instead of 4-up. `--density f`: hatching
+lines f times closer (all spacings / f; the darkest spacing is floored at the 0.3 mm pen width). First 9-up set: seed 8150,
+`--paper a3 --tiles 9 --style mixed --field border --light dramatic --density 1.5`.
+
 `--paper a3`: each tile is rendered natively at A5 (148.5x210 mm) with the same physical line spacing
 (scaling an A4 sheet down would pack the lines tighter than the 0.3 mm pen can draw). Pages go in bubble
 order (page 1 = bubbles 01-04, left to right, top to bottom) in `a3_specimen_<style>/` and `a3_context_<style>/`.
