@@ -59,6 +59,9 @@ Plotting on the AxiDraw V3/A3 (draw area 430 x 297, landscape): every portrait s
 drawing is on the left. The Pi's `~/axidraw_conf.py` must say `model = 2`, otherwise axicli assumes the A4
 machine and clips at 300 x 218 mm (fixed on 2026-10-18). Send with
 `Personal/Practice/Experiments/raspi-plotter/scripts/send-plot.ps1 <file>_plotter-landscape.svg`.
+The Pi's web UI lists plots newest first, so upload multi-page sets **last page first** (p03, p02, p01) to have them listed in
+order, and give files that share a name a unique one on the Pi (e.g. prefix the seeds: the overviews pages are all called
+`a3_overviews_<style>_plotter-landscape.svg`). Page counts: 21 bubbles 9-up = 9 + 9 + 3 (the last page is one row).
 
 Cluster generator (since 2026-10-18 evening): 16-26 bubbles, radii 0.3-1.9 skewed toward small (`SizeSkew` 2.2),
 90k-triangle budget; `--rmin/--rmax` override. Old seeds no longer reproduce the earlier clusters.
