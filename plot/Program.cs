@@ -13,6 +13,8 @@ using System.Linq;
 //       everything: overview, a specimen and a context sheet for every bubble, manifest.json
 //       --paper a3: the bubble sheets come 4-up on A3 pages (each tile an A5 sheet), the overview as one A3 sheet
 //       --tiles 9: 9-up instead (3x3 tiles, 99x140 mm);  --density f: hatching f times denser (any command)
+//       --context visible|all|dash: context sheets show the cluster's front borders only (default), every border, or
+//       every border with the back ones dashed
 //   bubbleplot overviews --seeds 11,12,13,14 [--style short] [--field light]
 //       four clusters' overviews 4-up on one A3 page
 //
@@ -55,7 +57,8 @@ public static class Program
         string hidden = opt("hidden", null);
         string extra = (swirl > 0 ? "-swirl" + (int)Math.Round(swirl * 100) : "") + (hidden != null ? "-hidden" + (hidden == "dash" ? "dash" : "") : "")
                      + (light == "dramatic" ? "-dramatic" : "") + (outline ? "" : "-nooutline")
-                     + (opt("density", "1") != "1" ? "-dense" + opt("density", "1") : "");
+                     + (opt("density", "1") != "1" ? "-dense" + opt("density", "1") : "")
+                     + (opt("context", "visible") != "visible" ? "-ctx" + opt("context", "visible") : "");
         var variants = (from st in styles from f in fields select new { Style = st, Field = f, Tag = (f == "light" ? st : st + "-" + f) + extra }).ToList();
 
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "editions"));
@@ -65,7 +68,7 @@ public static class Program
         Func<int, EditionSettings> settings = seed => new EditionSettings
         {
             Seed = seed, Count = int.Parse(opt("count", "0")), DetailBatches = int.Parse(opt("detail", "0")),
-            Light = light, Outline = outline,
+            Light = light, Outline = outline, ContextLines = opt("context", "visible"),
             RMin = double.Parse(opt("rmin", "0.3"), CI), RMax = double.Parse(opt("rmax", "1.9"), CI),
         };
 

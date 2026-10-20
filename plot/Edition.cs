@@ -26,6 +26,9 @@ public class EditionSettings
     public double Inkmm_s = 25;        // pen-down speed for the time estimate
     public double SheetW = 210, SheetH = 297;
     public string Light = "classic";   // classic (soft Lambert) | dramatic (raking key light, cast shadows, ambient occlusion)
+    // Context sheets: "visible" = the rest of the cluster with hidden lines removed (front borders + silhouette);
+    // "all" = its whole Plateau-border network, back borders too (an X-ray of the foam); "dash" = back borders dashed.
+    public string ContextLines = "visible";
     public bool Outline = true;        // Plateau-border arcs + silhouettes   // one sheet (A4); A5 tiles for 4-up A3 pages
 }
 
@@ -186,9 +189,12 @@ public static class Edition
         p.Layer("hatch").AddRange(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + k)));
         if (e.Outline) p.Layer("outline").AddRange(Outlines(s, sc, k));
         if (st.Hidden != null) p.Layer("hidden").AddRange(Hidden(s, sc, k, st.Hidden == "dash"));
-        // The rest of the cluster in outline (its own hidden lines removed), not drawn over the featured bubble.
+        // The rest of the cluster in outline, not drawn over the featured bubble: by default its own hidden lines
+        // removed; with ContextLines all/dash also every border behind the front surface (solid or dashed).
+        var context = Outlines(s, all, 0);
+        if (e.ContextLines == "all" || e.ContextLines == "dash") context.AddRange(Hidden(s, all, 0, e.ContextLines == "dash"));
         var keep = new List<List<V2>>();
-        foreach (var line in Outlines(s, all, 0))
+        foreach (var line in context)
         {
             var run = new List<V2>();
             foreach (var q in Densify(line, 0.2))

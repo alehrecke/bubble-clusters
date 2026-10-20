@@ -20,6 +20,11 @@ bubbleplot overviews --seeds 4721,1093,2207,3318            # four clusters on o
 bubbleplot preview --seed 4721 --style short --field all    # compare the three direction fields
 ```
 
+`--context visible|all|dash`: what the context sheets show of the rest of the cluster. `visible` (default) = front borders +
+silhouette (hidden lines removed); `all` = the whole Plateau-border network, back borders too (an X-ray, solid); `dash` = the
+same with the back borders dashed (0.8 mm dash, 0.6 mm gap). Lines are still cut where they'd cross the featured bubble. 9-up
+seed 8150: visible ~11 min/page, all ~21, dash ~39 (every dash is a pen lift).
+
 `--tiles 9` (with `--paper a3`): bubble sheets 9-up (3x3 tiles of 99x140 mm) instead of 4-up. `--density f`: hatching
 lines f times closer (all spacings / f; the darkest spacing is floored at the 0.3 mm pen width). First 9-up set: seed 8150,
 `--paper a3 --tiles 9 --style mixed --field border --light dramatic --density 1.5`.
