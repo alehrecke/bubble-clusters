@@ -87,7 +87,8 @@ public static partial class Edition
         var skin = Frame(s, v, 0, fr, p, e, baseSt, fit);
         double zTop = s.Mesh.V.Max(q => q.Z);
         var borders = BorderClean.Clean(s.Mesh, s.TargetEdge, new BorderCleanSettings { Spacing = s.TargetEdge * 0.5, IncludeHost = true });
-        if (kind == "meniscus") return Meniscus(s, b, skin, borders, zTop, v, fr, fit, p, e, baseSt, seed);
+        if (kind == "meniscus" || kind == "wet-lattice" || kind == "deep-stipple" || kind == "depth-hatch")
+            return Meniscus(s, b, skin, borders, zTop, v, fr, fit, p, e, baseSt, seed, kind);
         var lines = new List<KeyValuePair<double, List<V2>>>();   // (height 0..1, sheet polyline)
         foreach (var bd in borders)
         {

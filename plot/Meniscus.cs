@@ -17,16 +17,20 @@ using System.Linq;
 public static partial class Edition
 {
     static Plot Meniscus(FoamSolver s, BedSettings b, Scene skin, List<CleanBorder> borders, double zTop, View v,
-                         double[] fr, List<Vec3> fit, Plot p, EditionSettings e, HatchStyle baseSt, int seed)
+                         double[] fr, List<Vec3> fit, Plot p, EditionSettings e, HatchStyle baseSt, int seed, string variant = "meniscus")
     {
         var rng = new Random(seed * 7 + 5);
         double x0 = b.Margin, y0 = b.Margin, x1 = p.Width - b.Margin, y1 = p.Height - b.Margin;
-        var fine = p.Layer("fine");
-        var bold = p.Layer("bold");
+        // Single-pen variants (Alex, 2026-10-19: depth through layering with one pen) keep the meniscus foreground
+        // and push depth into the pile: wet-lattice (line weight), deep-stipple (dots), depth-hatch (shading).
+        // Both layers then plot with the same pen: "deep" first, "front" (the plane) on top.
+        bool twoPen = variant == "meniscus";
+        var fine = p.Layer(twoPen ? "fine" : "deep");
+        var bold = p.Layer(twoPen ? "bold" : "front");
 
         // Borders on the sheet: plane ones (with their ends: the plane nodes) and the rest with their height.
         var plane = new List<List<V2>>(); var planeOpen = new List<bool>();
-        var upper = new List<KeyValuePair<double, List<V2>>>();
+        var upper = new List<KeyValuePair<double, List<V2>>>(); var upperOpen = new List<bool>();
         var planeNodes = new List<V2>(); var upperNodes = new List<KeyValuePair<double, V2>>();
         foreach (var bd in borders)
         {
@@ -43,7 +47,7 @@ public static partial class Edition
             else
             {
                 double h = Math.Max(0.02, Math.Min(1, pts.Average(q => q.Z) / zTop));
-                upper.Add(new KeyValuePair<double, List<V2>>(h, l2));
+                upper.Add(new KeyValuePair<double, List<V2>>(h, l2)); upperOpen.Add(!bd.Closed);
                 if (!bd.Closed)
                 {
                     upperNodes.Add(new KeyValuePair<double, V2>(pts[0].Z / zTop, l2[0]));
@@ -63,33 +67,83 @@ public static partial class Edition
         double sig = 0.36 * Math.Min(p.Width, p.Height);
         Func<V2, double> F = q => { var d = q - fc; return Math.Exp(-(d.X * d.X + d.Y * d.Y) / (2 * sig * sig)); };
 
-        // ---- fine pen: the pile above the plane ----
-        // Deep walls: stipple only in the focus.
+        // ---- the pile above the plane ----
         var classic = Clone(e); classic.Light = "classic";
         var inner = Frame(s, v, -1, fr, p, classic, Clone(baseSt), fit);
-        var inMs = new MarkSettings { DotMin = 0.42, DotMax = 4.5, DotGamma = 1.8 };
-        fine.AddRange(Stipple(inner, inMs, rng, 0.75, q => Math.Pow(F(q), 1.3)));
-        // Borders by height: wobbly lines, then broken, then dotted.
-        foreach (var kv in upper)
+        // Height (0 plane .. 1 top) of the nearest interior wall at a sheet point.
+        Func<V2, double> wallH = q =>
         {
-            double h = kv.Key;
-            var one = new List<List<V2>> { kv.Value };
-            if (h > 0.72) { fine.AddRange(DotLines(one, 0.42 + 0.7 * (h - 0.72), 0.04, inMs, rng)); continue; }
-            var ms = new MarkSettings { WobbleWavelength = 4.5, Breaks = h > 0.45 ? 0.03 + 0.12 * (h - 0.45) : 0 };
-            fine.AddRange(Wobble(one, 0.05 + 0.12 * h, ms, rng, ms.Breaks > 0));
-        }
-        // A dusting of dots around the upper nodes, in the focus.
-        foreach (var kv in upperNodes)
+            int si; Vec3 pos, n;
+            return inner.Query(q, out si, out pos, out n) ? Math.Max(0, Math.Min(1, pos.Z / zTop)) : 1;
+        };
+        if (variant == "wet-lattice")
         {
-            double f = F(kv.Value);
-            int n = (int)Math.Round(5 * f * (0.4 + kv.Key));
-            for (int i = 0; i < n; i++)
+            // Every border a wet ribbon tapering toward mid-border, its width shrinking with height; nodes as blobs.
+            for (int k = 0; k < upper.Count; k++)
             {
-                double a = rng.NextDouble() * 2 * Math.PI, r = 0.6 + 2.2 * rng.NextDouble();
-                var q = kv.Value + new V2(Math.Cos(a), Math.Sin(a)) * r;
-                double ang = rng.NextDouble() * Math.PI;
-                var o = new V2(Math.Cos(ang), Math.Sin(ang)) * 0.1;
-                fine.Add(new List<V2> { q - o, q + o });
+                double h = upper[k].Key, wmax = 0.5 * Math.Pow(1 - h, 1.5);
+                fine.AddRange(Ribbon(upper[k].Value, upperOpen[k], wmax, 0.0, 4.0));
+            }
+            foreach (var kv in upperNodes) fine.AddRange(Blob(kv.Value, 0.32 * Math.Pow(1 - Math.Min(1, kv.Key), 1.5)));
+        }
+        else if (variant == "deep-stipple")
+        {
+            // Crisp single borders (dotted near the top); the walls stippled densest near the plane.
+            var inMs = new MarkSettings { DotMin = 0.34, DotMax = 4.5, DotGamma = 1.7 };
+            fine.AddRange(Stipple(inner, inMs, rng, 0.95, q => Math.Pow(1 - wallH(q), 1.4) * (0.55 + 0.45 * F(q))));
+            foreach (var kv in upper)
+            {
+                var one = new List<List<V2>> { kv.Value };
+                if (kv.Key > 0.75) fine.AddRange(DotLines(one, 0.35 + 0.6 * (kv.Key - 0.75), 0.03, inMs, rng));
+                else fine.AddRange(one);
+            }
+        }
+        else if (variant == "depth-hatch")
+        {
+            // Walls hatched along their surfaces; strokes thin out and drop away with height.
+            var hs = Clone(baseSt); hs.Field = "facet"; hs.Hyper = false; hs.SepMin = 0.35; hs.SepMax = 1.2;
+            var inner2 = Frame(s, v, -1, fr, p, classic, hs, fit);
+            foreach (var st in Hatcher.Hatch(inner2, hs, Axes(inner2, seed), new Random(seed * 7 + 9)))
+            {
+                if (st.Count < 2) continue;
+                var mid = st[st.Count / 2];
+                double keepP = Math.Pow(1 - wallH(mid), 1.3) * (0.45 + 0.55 * F(mid));
+                if (rng.NextDouble() < keepP) fine.Add(st);
+            }
+            foreach (var kv in upper)
+            {
+                var one = new List<List<V2>> { kv.Value };
+                if (kv.Key > 0.75) fine.AddRange(DotLines(one, 0.35 + 0.6 * (kv.Key - 0.75), 0.03, new MarkSettings(), rng));
+                else fine.AddRange(one);
+            }
+        }
+        else
+        {
+            // Deep walls: stipple only in the focus.
+            var inMs = new MarkSettings { DotMin = 0.42, DotMax = 4.5, DotGamma = 1.8 };
+            fine.AddRange(Stipple(inner, inMs, rng, 0.75, q => Math.Pow(F(q), 1.3)));
+            // Borders by height: wobbly lines, then broken, then dotted.
+            foreach (var kv in upper)
+            {
+                double h = kv.Key;
+                var one = new List<List<V2>> { kv.Value };
+                if (h > 0.72) { fine.AddRange(DotLines(one, 0.42 + 0.7 * (h - 0.72), 0.04, inMs, rng)); continue; }
+                var ms = new MarkSettings { WobbleWavelength = 4.5, Breaks = h > 0.45 ? 0.03 + 0.12 * (h - 0.45) : 0 };
+                fine.AddRange(Wobble(one, 0.05 + 0.12 * h, ms, rng, ms.Breaks > 0));
+            }
+            // A dusting of dots around the upper nodes, in the focus.
+            foreach (var kv in upperNodes)
+            {
+                double f = F(kv.Value);
+                int n = (int)Math.Round(5 * f * (0.4 + kv.Key));
+                for (int i = 0; i < n; i++)
+                {
+                    double a = rng.NextDouble() * 2 * Math.PI, r = 0.6 + 2.2 * rng.NextDouble();
+                    var q = kv.Value + new V2(Math.Cos(a), Math.Sin(a)) * r;
+                    double ang = rng.NextDouble() * Math.PI;
+                    var o = new V2(Math.Cos(ang), Math.Sin(ang)) * 0.1;
+                    fine.Add(new List<V2> { q - o, q + o });
+                }
             }
         }
 
@@ -178,7 +232,8 @@ public static partial class Edition
             var clipped = ClipRect(p.Layers[name], x0, y0, x1, y1);
             p.Layers[name].Clear(); p.Layers[name].AddRange(clipped);
         }
-        AddLabel(p, "MENISCUS  (FOAM BED)  PEN 1 FINE: LAYER FINE  PEN 2 BOLD: LAYER BOLD  " + s.Mesh.BubbleCount + " BUBBLES  SEED " + seed);
+        AddLabel(p, twoPen ? "MENISCUS  (FOAM BED)  PEN 1 FINE: LAYER FINE  PEN 2 BOLD: LAYER BOLD  " + s.Mesh.BubbleCount + " BUBBLES  SEED " + seed
+                           : MarkSettings.NameOf(variant) + "  (FOAM BED " + variant + ", ONE PEN)  " + s.Mesh.BubbleCount + " BUBBLES  SEED " + seed);
         return p;
     }
 
@@ -267,6 +322,48 @@ public static partial class Edition
                 used.Add(nx); line.Add(pt[nx]); cur = nx;
             }
             if (line.Count >= 2) res.Add(line);
+        }
+        return res;
+    }
+
+    // A wet ribbon along a border: parallel passes 0.14 mm apart, each drawn where the half-width (minHalf
+    // mid-border, growing to maxHalf within ~nodeLen mm of a node) is wide enough for it.
+    static List<List<V2>> Ribbon(List<V2> line, bool open, double maxHalf, double minHalf, double nodeLen)
+    {
+        var res = new List<List<V2>>();
+        var pts = Densify(line, 0.2).ToList();
+        if (pts.Count < 2) return res;
+        var along = new double[pts.Count];
+        for (int i = 1; i < pts.Count; i++) along[i] = along[i - 1] + (pts[i] - pts[i - 1]).Length;
+        double L = along[pts.Count - 1];
+        var nrm = new V2[pts.Count];
+        for (int i = 0; i < pts.Count; i++)
+        {
+            int j = Math.Min(pts.Count - 1, i + 1), m = Math.Max(0, i - 1);
+            var d = (pts[j] - pts[m]).Normalized(); nrm[i] = new V2(-d.Y, d.X);
+        }
+        Func<int, double> half = i => minHalf + (maxHalf - minHalf) * (open ? Math.Min(1, Math.Exp(-along[i] / nodeLen) + Math.Exp(-(L - along[i]) / nodeLen)) : 0.1);
+        res.Add(pts);
+        for (int pass = 1; pass * 0.14 <= maxHalf + 1e-9; pass++)
+            for (int sd = -1; sd <= 1; sd += 2)
+            {
+                double off = sd * pass * 0.14;
+                foreach (var r in Runs(pts.Count, i => Math.Abs(off) <= half(i), i => pts[i] + nrm[i] * off))
+                    res.Add(Hatcher.Simplify(r, 0.01));
+            }
+        return res;
+    }
+
+    // A small filled disc (concentric rings 0.13 mm apart).
+    static List<List<V2>> Blob(V2 q, double rb)
+    {
+        var res = new List<List<V2>>();
+        for (double r = 0.1; r <= rb; r += 0.13)
+        {
+            var ring = new List<V2>();
+            int n = Math.Max(8, (int)(2 * Math.PI * r / 0.15));
+            for (int i = 0; i <= n; i++) { double a = 2 * Math.PI * i / n; ring.Add(q + new V2(Math.Cos(a), Math.Sin(a)) * r); }
+            res.Add(ring);
         }
         return res;
     }

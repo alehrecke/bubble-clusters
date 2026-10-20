@@ -140,6 +140,9 @@ Full sheet with a 10 mm paper margin. The solved foam is saved (`bed.obj` + `win
   `bold` (plot second, 0.3-0.5 black): plane borders as ribbons swelling toward the nodes, node blobs, and meniscus contours
   (marching squares on a blurred distance-to-wall field, so they round off in the corners; reach grows near nodes). Focus = densest
   patch of plane nodes, Gaussian falloff. Seed 3301: ~13k strokes, ~72 min.
+- One-pen variants of meniscus (layers deep + front, same pen): `wet-lattice` (every border a wet ribbon, width shrinking with
+  height; ~42 min), `deep-stipple` (crisp borders + wall stipple weighted (1-height)^1.4: densest near the plane; ~2 h),
+  `depth-hatch` (walls hatched, strokes kept with probability (1-height)^1.3; ~95 min, busy).
 Seed 3301 took ~50 min to solve (234k triangles); settle ended with 7 pinched borders (not fully clean, not visible in the drawings).
 
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
