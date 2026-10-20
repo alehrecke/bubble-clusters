@@ -119,6 +119,9 @@ passes in the darks. `wild` is natural at 0.5 mm wobble. Also RotateJitter, SepJ
 Round 3 default quad: glass-dots (skin and walls both stippled, walls sparser, borders kept) | cross (back to 1.1-1.25x spacing,
 smaller jitter: delicate) | inkdrift (1.1 mm drift, no breaks, outline wobbles and drifts with the hatching) | wild-bg (no outlines;
 hatched ground with nested 4/2/1/0.5 mm line families by tone: cast shadow away from the light plus a dark contact halo).
+Round 4 default quad: glass-pure (dots only; borders and silhouette as runs of dots, 0.32 mm visible / 0.55 mm behind) | cross |
+inkdrift (outline kept smooth and in place) | wild-bg (sky ground: near-horizontal lines, darker toward the top, stretched cloud
+patches, no cast shadow). glass-dots (stippled with line borders) still available.
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
 ## Output: `editions/<seed>/` (git-ignored)

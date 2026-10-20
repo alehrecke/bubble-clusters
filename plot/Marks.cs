@@ -52,6 +52,18 @@ public static partial class Edition
             var inSt = Clone(baseSt); inSt.Field = "facet"; inSt.Hyper = false; inSt.ToneScale = 0.8;
             inSt.SepMin *= 1.25; inSt.SepMax *= 1.1;
             var inner = Frame(s, v, -1, OverviewFrame, p, classic, inSt, fit);
+            if (ms.Kind == "glass-pure")
+            {
+                // Dots only: the borders and silhouette are drawn as dense runs of dots instead of lines
+                // (visible ones tight, the internal network behind sparser).
+                var inMs = new MarkSettings { DotMin = ms.DotMin * 1.25, DotMax = ms.DotMax, DotGamma = ms.DotGamma, DotLength = ms.DotLength };
+                p.Layer("inner").AddRange(Stipple(inner, inMs, rng, 0.8));
+                p.Layer("innerborders").AddRange(DotLines(Hidden(s, skin, 0, false), 0.55, 0.06, ms, rng));
+                var dskin = Frame(s, v, 0, OverviewFrame, p, e, Clone(baseSt), fit);
+                p.Layer("hatch").AddRange(Stipple(dskin, ms, rng, 1.05));
+                p.Layer("hatch").AddRange(DotLines(Outlines(s, dskin, 0), 0.32, 0.05, ms, rng));
+                return p;
+            }
             if (ms.Kind == "glass-dots")
             {
                 // All stipple: the walls in slightly sparser dots than the skin, so the skin still reads in front.
@@ -84,8 +96,8 @@ public static partial class Edition
         {
             var lines = Hatcher.Hatch(sc, baseSt, Axes(sc, v.Seed), new Random(v.Seed * 7 + 1));
             p.Layer("hatch").AddRange(InkDrift(Wobble(lines, wob, ms, rng, false), sc, ms, rng, true));
-            // The outline wobbles and drifts with the same field as the hatching, so they stay together.
-            if (e.Outline) p.Layer("outline").AddRange(InkDrift(Wobble(Outlines(s, sc, 0), wob, ms, rng, false), sc, ms, rng, false));
+            // The outline stays smooth and in place (Alex, round 4): only the hatching drifts.
+            if (e.Outline) p.Layer("outline").AddRange(Outlines(s, sc, 0));
             return p;
         }
         else if (ms.Kind == "cross")
@@ -224,10 +236,36 @@ public static partial class Edition
         return res;
     }
 
+    // Lines redrawn as runs of dots, spacing mm apart with a little sideways scatter.
+    static List<List<V2>> DotLines(List<List<V2>> lines, double spacing, double scatter, MarkSettings ms, Random rng)
+    {
+        var res = new List<List<V2>>();
+        foreach (var l in lines)
+        {
+            double carry = spacing * rng.NextDouble();
+            for (int i = 1; i < l.Count; i++)
+            {
+                var a = l[i - 1]; var d = l[i] - a; double len = d.Length;
+                if (len < 1e-9) continue;
+                var u = d * (1 / len); var nrm = new V2(-u.Y, u.X);
+                double t = carry;
+                for (; t < len; t += spacing * (0.8 + 0.4 * rng.NextDouble()))
+                {
+                    var q = a + u * t + nrm * (scatter * (rng.NextDouble() * 2 - 1));
+                    double ang = rng.NextDouble() * Math.PI, h = ms.DotLength * (0.7 + 0.6 * rng.NextDouble()) / 2;
+                    var o = new V2(Math.Cos(ang), Math.Sin(ang)) * h;
+                    res.Add(new List<V2> { q - o, q + o });
+                }
+                carry = t - len;
+            }
+        }
+        return res;
+    }
+
     // ---------- hatched ground ----------
-    // Parallel lines behind the cluster, stopping short of it (a ~0.6 mm halo). The tone is darkest in the
-    // cluster's cast shadow (the silhouette shifted away from the light) and fades with distance, plus a little
-    // noise. Lines come in nested families (every 8th, 4th, 2nd, all) switched on by tone, so the spacing goes
+    // Near-horizontal lines behind the cluster, stopping short of it (a ~0.6 mm gap): a sky, not a wall
+    // (round 4: no cast shadow). The tone darkens toward the top, with soft horizontally stretched cloud patches
+    // and a slight darkening right at the silhouette so the lit edge reads without an outline. Lines come in nested families (every 8th, 4th, 2nd, all) switched on by tone, so the spacing goes
     // 4 / 2 / 1 / 0.5 mm. Ragged ends at the frame edge.
     static List<List<V2>> Background(Scene sc, Plot p, int seed)
     {
@@ -246,19 +284,16 @@ public static partial class Edition
                 if (c) cnt++;
             }
         Chamfer(dist, gw, gh, g);
-        double Rc = Math.Sqrt(cnt * g * g / Math.PI);
-        // Shadow: the distance field sampled shifted toward the light (= the silhouette shifted away from it).
-        var l2 = new V2(Vec3.Dot(sc.Light, sc.R), -Vec3.Dot(sc.Light, sc.U));
-        l2 = l2.Length > 1e-6 ? l2.Normalized() : new V2(-0.7, -0.7);
-        var shift = l2 * (0.22 * Rc);
         Func<V2, double> D = q =>
         {
             int i = (int)Math.Round((q.X - x0) / g), j = (int)Math.Round((q.Y - y0) / g);
             if (i < 0 || j < 0 || i >= gw || j >= gh) return 1e9;
             return dist[j * gw + i];
         };
-        Func<V2, double> tone = q => 0.34 + 0.5 * Math.Exp(-D(q + shift) / (0.22 * Rc)) + 0.22 * Math.Exp(-D(q) / 2.5) + 0.1 * Noise(q.X / 18, q.Y / 18, seed + 41);
-        double ang = (12 + 20 * rng.NextDouble()) * Math.PI / 180;
+        Func<V2, double> tone = q => 0.62 - 0.34 * (q.Y - y0) / (y1 - y0)
+            + 0.2 * Noise(q.X / 40, q.Y / 12, seed + 41) + 0.07 * Noise(q.X / 9, q.Y / 4, seed + 43)
+            + 0.12 * Math.Exp(-D(q) / 2.5);
+        double ang = (-4 + 8 * rng.NextDouble()) * Math.PI / 180;
         var dir = new V2(Math.Cos(ang), Math.Sin(ang));
         var nrm = new V2(-dir.Y, dir.X);
         var mid = new V2((x0 + x1) / 2, (y0 + y1) / 2);
