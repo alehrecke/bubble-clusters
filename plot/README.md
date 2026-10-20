@@ -135,6 +135,11 @@ Full sheet with a 10 mm paper margin. The solved foam is saved (`bed.obj` + `win
 - `mist`: transparent stipple. Interior walls + skin in dots (DotMin 0.36, gamma 1.8, tone 0.66 / 0.8), every border as a run of dots,
   footprint borders on the plane tightest. Seed 3301: ~104k dots, ~7.5 h.
 - `lattice`: borders only, thickened by height: 4 parallel passes 0.17 mm apart on the plane down to 1 at the top of the pile. ~30 min.
+- `meniscus` (Meniscus.cs): lattice + wet borders, two pens. Layer `fine` (plot first, fine grey/sepia pen): pile above the plane,
+  lines going wobbly -> broken -> dotted with height, stipple on deep walls and dust around upper nodes in the focus only. Layer
+  `bold` (plot second, 0.3-0.5 black): plane borders as ribbons swelling toward the nodes, node blobs, and meniscus contours
+  (marching squares on a blurred distance-to-wall field, so they round off in the corners; reach grows near nodes). Focus = densest
+  patch of plane nodes, Gaussian falloff. Seed 3301: ~13k strokes, ~72 min.
 Seed 3301 took ~50 min to solve (234k triangles); settle ended with 7 pinched borders (not fully clean, not visible in the drawings).
 
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.

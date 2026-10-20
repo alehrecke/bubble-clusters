@@ -36,7 +36,7 @@ public class MarkSettings
     {
         { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
         { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
-        { "glass-dots", "Frost" }, { "glass-pure", "Mist" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "lattice", "Lattice" },
     };
 
     public static string Resolve(string kindOrName)
@@ -170,7 +170,7 @@ public static partial class Edition
     // Dart throwing with a tone-dependent radius (variable-radius Poisson disc): every dot keeps at least
     // r(tone) from the others, so dots pack tight in the darks and spread in the lights; a low-frequency
     // noise makes the density waver like hand stippling.
-    static List<List<V2>> Stipple(Scene sc, MarkSettings ms, Random rng, double toneScale)
+    static List<List<V2>> Stipple(Scene sc, MarkSettings ms, Random rng, double toneScale, Func<V2, double> weight = null)
     {
         var dots = new List<List<V2>>();
         double cell = ms.DotMin * 0.7;
@@ -186,6 +186,7 @@ public static partial class Edition
             if (sc.TwoSided && Vec3.Dot(n, sc.F) > 0) n = n * -1;
             double tone = sc.Lit != null ? 1 - sc.Lit(si, q, pos, n) : 1 - Math.Max(0, Vec3.Dot(n, sc.Light));
             if (sc.Lit == null) tone = Math.Min(1, tone + 0.25 * Math.Pow(1 - Math.Abs(Vec3.Dot(n, sc.F)), 2));
+            if (weight != null) tone *= weight(q);
             tone = Math.Max(0, (tone * toneScale - 0.08) / 0.92);
             if (tone < 0.02) continue;
             double r = Math.Min(ms.DotMax, ms.DotMin / Math.Pow(tone, ms.DotGamma));
