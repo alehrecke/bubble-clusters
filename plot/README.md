@@ -100,6 +100,19 @@ elevation); otherwise the seed picks them.
 Options: `--style short|long|both`, `--count N` (bubbles; default random 9-15), `--detail B` (Border Detail
 batches of small bubbles after relaxing), `--bubble K` (which bubble a preview features), `--out DIR`.
 
+## Mark-making tests (`marks`, 2026-10-19)
+
+`bubbleplot marks --seed N [--marks stipple,cross,natural,glass] [--wobble mm] [--breaks per-mm] [--dotmin mm]` writes one A3
+overview per kind to `editions/marks_<seed>/` (Marks.cs):
+- `stipple`: variable-radius Poisson-disc dots (spacing DotMin/tone^0.75, wavering with low-frequency noise), each a 0.22 mm tick.
+  Seed 6427: 35k dots ≈ 2.5 h of pen lifts. `--dotmin 0.6` roughly halves that.
+- `cross`: the surface-following pass opened up 1.6x, then a pass rotated 72 deg over tone > 0.38, and a -38 deg pass over tone > 0.68.
+  Each pass has its own spacing grid; light wobble.
+- `natural`: house style + hand noise: sideways wander 0.12 mm (two noise octaves, 3.5 mm wavelength), small breaks (0.04/mm).
+- `glass`: interior walls (`Scene.Surface(m, -1)`, two-sided shading, facet rings) on layer `inner`, the internal border network
+  on `innerborders`, the skin at 0.6 tone on top. Plot `inner` + `innerborders` with a finer or lighter pen.
+HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
+
 ## Output: `editions/<seed>/` (git-ignored)
 
 | File | What |

@@ -25,8 +25,11 @@ public class Scene
     float[] depth; int[] tri;
     V2[] proj; double[] projDepth;                  // per mesh vertex (sheet mm, depth)
 
+    public bool TwoSided;                           // interior walls: normals turned toward the viewer when shading
+
     public static Scene Surface(FoamMesh m, int bubble)
     {
+        // bubble == -1: the interior walls (films between two bubbles), for the see-through "glass" marks.
         // bubble > 0: that bubble's closed surface (all its films). bubble == 0: the cluster's outer skin
         // (the films facing the outside air), the cluster drawn as an opaque solid.
         var sc = new Scene { M = m };
@@ -36,7 +39,12 @@ public class Scene
             if (FoamMesh.IsSolid(t)) continue;
             int own;
             bool flip;
-            if (bubble > 0)
+            if (bubble < 0)
+            {
+                if (t.Neg > 0 && t.Pos > 0) { own = t.Neg; flip = false; }
+                else continue;
+            }
+            else if (bubble > 0)
             {
                 if (t.Neg == bubble) { own = bubble; flip = false; }
                 else if (t.Pos == bubble) { own = bubble; flip = true; }
@@ -53,6 +61,7 @@ public class Scene
         }
         var idx = new Dictionary<long, int>();
         foreach (long f in sc.Face) { int i; if (!idx.TryGetValue(f, out i)) { i = idx.Count; idx[f] = i; } sc.FaceIdx.Add(i); }
+        sc.TwoSided = bubble < 0;
         sc.SmoothNormals();
         sc.FilmAxis = new Vec3[idx.Count];
         for (int k = 0; k < sc.Tris.Count; k++) sc.FilmAxis[sc.FaceIdx[k]] = sc.FilmAxis[sc.FaceIdx[k]] + sc.TriNormal(k);

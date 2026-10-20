@@ -120,6 +120,29 @@ public static class Program
         }
         var view = Edition.MakeView(e.Seed, double.Parse(opt("az", "NaN"), CI), double.Parse(opt("el", "NaN"), CI));
         if (cmd == "tone") { Edition.ToneImage(s, view, e, Path.Combine(dir, "tone_" + e.Light + ".png")); log("tone image written"); return 0; }
+        if (cmd == "marks")
+        {
+            // Mark-making tests: one A3 overview per kind (Marks.cs). --marks stipple,cross,natural,glass
+            // [--wobble mm] [--breaks per-mm] [--dotmin mm]
+            e.SheetW = A3W; e.SheetH = A3H;
+            string mdir = Path.Combine(root, "marks_" + e.Seed.ToString(CI));
+            foreach (var kind in opt("marks", "stipple,cross,natural,glass").Split(','))
+            {
+                var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
+                var ms = new MarkSettings
+                {
+                    Kind = kind.Trim(), Wobble = double.Parse(opt("wobble", "-1"), CI),
+                    Breaks = double.Parse(opt("breaks", "0.04"), CI), DotMin = double.Parse(opt("dotmin", "0.42"), CI),
+                };
+                var mp = Edition.MarkOverview(s, view, hs, e, ms);
+                var mi = Edition.Write(mp, mdir, "a3_mark_" + ms.Kind + (opt("wobble", null) != null ? "_wobble" + opt("wobble", "") : ""),
+                                       "Bubble cluster " + e.Seed + " (marks: " + ms.Kind + ")", e);
+                log("mark " + ms.Kind + ": " + mi["strokes"] + " strokes, ~" + mi["estMinutes"] + " min");
+            }
+            File.WriteAllText(Path.Combine(mdir, "cluster.obj"), FoamAnalysis.ToObj(s.Mesh));
+            log("done: " + mdir);
+            return 0;
+        }
         var vol = s.Mesh.Volumes();
         var bubbles = Enumerable.Range(1, s.Mesh.BubbleCount).Where(k => !s.IsDead(k) && vol[k] > 0).ToList();
         var manifest = new Dictionary<string, object>

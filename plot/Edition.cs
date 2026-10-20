@@ -33,7 +33,7 @@ public class EditionSettings
     public bool Outline = true;        // Plateau-border arcs + silhouettes   // one sheet (A4); A5 tiles for 4-up A3 pages
 }
 
-public static class Edition
+public static partial class Edition
 {
     static readonly CultureInfo CI = CultureInfo.InvariantCulture;
 
@@ -418,7 +418,7 @@ public static class Edition
             svg = Path.Combine(dir, name + ".svg");
             SheetIO.WriteSvg(p, svg, title);
         }
-        SheetIO.WritePng(p, png, e.PreviewPxPerMm, new Dictionary<string, double> { { "context", 0.45 }, { "hidden", 0.5 } });
+        SheetIO.WritePng(p, png, e.PreviewPxPerMm, new Dictionary<string, double> { { "context", 0.45 }, { "hidden", 0.5 }, { "inner", 0.55 }, { "innerborders", 0.6 } });
         double len = p.PenDownLength();
         int strokes = p.Strokes();
         return new Dictionary<string, object>

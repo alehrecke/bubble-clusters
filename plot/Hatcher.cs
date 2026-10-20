@@ -33,6 +33,12 @@ public class HatchStyle
     // Steep tone curve: spacing = HyperMin / (darkness), so the darks close up to near-solid black and the
     // lights open up fast (cut off at SepMax). Used with the dramatic lighting.
     public bool Hyper = false;
+    // Mark-making passes (Marks.cs): rotate the stroke direction on the sheet by RotateDeg, and remap the
+    // tone so a pass only draws where tone*ToneScale > ToneFrom (cross-hatching: later passes cover the
+    // darker areas only).
+    public double RotateDeg = 0;
+    public double ToneFrom = 0;
+    public double ToneScale = 1;
     public double HyperMin = 0.33;
     public double HyperMax = 6.0;
 }
@@ -51,6 +57,7 @@ public static class Hatcher
         {
             int s; Vec3 pos, n;
             if (!sc.Query(q, out s, out pos, out n)) return null;
+            if (sc.TwoSided && Vec3.Dot(n, sc.F) > 0) n = n * -1;   // interior walls: shade the side facing the viewer
             double tone;
             if (sc.Lit != null) tone = 1 - sc.Lit(s, q, pos, n);
             else
@@ -95,6 +102,13 @@ public static class Hatcher
             double dx = Vec3.Dot(t, sc.R), dy = -Vec3.Dot(t, sc.U);
             double dl = Math.Sqrt(dx * dx + dy * dy);
             if (dl < 1e-6) { dx = 1; dy = 0; dl = 1; }
+            if (st.RotateDeg != 0)
+            {
+                double c = Math.Cos(st.RotateDeg * Math.PI / 180), sn = Math.Sin(st.RotateDeg * Math.PI / 180);
+                double rx = dx * c - dy * sn, ry = dx * sn + dy * c; dx = rx; dy = ry;
+            }
+            if (st.ToneScale != 1 || st.ToneFrom > 0)
+                tone = Math.Max(0, (tone * st.ToneScale - st.ToneFrom) / (1 - st.ToneFrom));
             return new[] { tone, dx / dl, dy / dl, s, (double)sc.FaceIdx[s], ok };
         };
         double sepMax = st.Hyper ? st.HyperMax : st.SepMax;
