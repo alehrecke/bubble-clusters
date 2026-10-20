@@ -122,6 +122,21 @@ hatched ground with nested 4/2/1/0.5 mm line families by tone: cast shadow away 
 Round 4 default quad: glass-pure (dots only; borders and silhouette as runs of dots, 0.32 mm visible / 0.55 mm behind) | cross |
 inkdrift (outline kept smooth and in place) | wild-bg (sky ground: near-horizontal lines, darker toward the top, stretched cloud
 patches, no cast shadow). glass-dots (stippled with line borders) still available.
+**Names** (printed on every PNG preview, layer `_label`, never plotted; accepted by `--marks` in place of the kind):
+Sand = stipple, Engrave = cross, Hand = natural, Tremor = wild, Tremor Sky = wild-bg, Drift = inkdrift, Lens = glass,
+Ghost = glass-stipple, Frost = glass-dots, Mist = glass-pure. `--round r4` adds a round tag to the label.
+
+## Foam bed (`bed`, 2026-10-19)
+
+`bubbleplot bed --seed N [--count 120] [--layers 3] [--bed mist,lattice] [--reuse]` -> `editions/bed_<seed>/`. The A3 sheet is the plane
+the foam sits on (PlaneHost z = 0); bubbles (r 0.12..1.2) are dropped one by one, each landing in the lowest of 8 tried spots, over an
+area a little bigger than the window, so the pile is ~3 layers deep and runs off the sheet edges. Viewed straight up through the plane.
+Full sheet with a 10 mm paper margin. The solved foam is saved (`bed.obj` + `window.txt`); `--reuse` replots it in seconds.
+- `mist`: transparent stipple. Interior walls + skin in dots (DotMin 0.36, gamma 1.8, tone 0.66 / 0.8), every border as a run of dots,
+  footprint borders on the plane tightest. Seed 3301: ~104k dots, ~7.5 h.
+- `lattice`: borders only, thickened by height: 4 parallel passes 0.17 mm apart on the plane down to 1 at the top of the pile. ~30 min.
+Seed 3301 took ~50 min to solve (234k triangles); settle ended with 7 pinched borders (not fully clean, not visible in the drawings).
+
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
 ## Output: `editions/<seed>/` (git-ignored)

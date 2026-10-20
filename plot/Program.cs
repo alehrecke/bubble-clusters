@@ -98,6 +98,39 @@ public static class Program
         }
 
         var e = settings(int.Parse(opt("seed", "1")));
+        if (cmd == "bed")
+        {
+            // Foam bed on the A3 sheet, seen from below through the plane (Bed.cs).
+            //   bed --seed N [--count 120] [--layers 3] [--bed mist,lattice] [--reuse: replot the saved foam]
+            e.SheetW = A3W; e.SheetH = A3H;
+            var b = new BedSettings { Count = int.Parse(opt("count", "120")), Layers = double.Parse(opt("layers", "3"), CI) };
+            string bdir = Path.Combine(root, "bed_" + e.Seed.ToString(CI));
+            Directory.CreateDirectory(bdir);
+            string bobj = Path.Combine(bdir, "bed.obj"), bwin = Path.Combine(bdir, "window.txt");
+            FoamSolver bs;
+            if (args.Contains("--reuse") && File.Exists(bobj) && File.Exists(bwin))
+            {
+                var wh = File.ReadAllText(bwin).Split(' ');
+                b.WinW = double.Parse(wh[0], CI); b.WinH = double.Parse(wh[1], CI);
+                bs = new FoamSolver(FoamAnalysis.FromObj(File.ReadAllText(bobj)), new SolverSettings()) { Host = new PlaneHost(Vec3.Zero, new Vec3(0, 0, 1)) };
+                log("reusing " + bobj);
+            }
+            else
+            {
+                bs = Edition.GenerateBed(e, b, log);
+                File.WriteAllText(bobj, FoamAnalysis.ToObj(bs.Mesh));
+                File.WriteAllText(bwin, b.WinW.ToString("R", CI) + " " + b.WinH.ToString("R", CI));
+            }
+            foreach (var kind in opt("bed", "mist,lattice").Split(',').Select(k => k.Trim().ToLowerInvariant()))
+            {
+                var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
+                var bp = Edition.BedSheet(bs, b, kind, hs, e, e.Seed);
+                var bi = Edition.Write(bp, bdir, "a3_bed_" + kind, "Foam bed " + e.Seed + " (" + kind + ")", e);
+                log("bed " + kind + ": " + bi["strokes"] + " strokes, ~" + bi["estMinutes"] + " min");
+            }
+            log("done: " + bdir);
+            return 0;
+        }
         string dir = Path.Combine(root, e.Seed.ToString(CI));
         FoamSolver s;
         int featured = -1;
@@ -128,13 +161,13 @@ public static class Program
             if (args.Contains("--quad"))
             {
                 // Four kinds on one A3 page (A5 quadrants, left to right, top to bottom) to plot side by side.
-                var kinds = opt("marks", "glass-pure,cross,inkdrift,wild-bg").Split(',').Select(k => k.Trim()).Take(4).ToList();
+                var kinds = opt("marks", "glass-pure,cross,inkdrift,wild-bg").Split(',').Select(MarkSettings.Resolve).Take(4).ToList();
                 e.SheetW = A3W / 2; e.SheetH = A3H / 2;
                 var tiles = new List<Plot>();
                 foreach (var kind in kinds)
                 {
                     var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
-                    var ms = new MarkSettings { Kind = kind, Wobble = double.Parse(opt("wobble", "-1"), CI) };
+                    var ms = new MarkSettings { Kind = kind, Wobble = double.Parse(opt("wobble", "-1"), CI), Tag = opt("round", "") };
                     var tp = Edition.MarkOverview(s, view, hs, e, ms);
                     log("quadrant " + kind + ": " + tp.Strokes() + " strokes");
                     tiles.Add(tp);
@@ -153,7 +186,7 @@ public static class Program
                 var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
                 var ms = new MarkSettings
                 {
-                    Kind = kind.Trim(), Wobble = double.Parse(opt("wobble", "-1"), CI),
+                    Kind = MarkSettings.Resolve(kind), Tag = opt("round", ""), Wobble = double.Parse(opt("wobble", "-1"), CI),
                     Breaks = double.Parse(opt("breaks", "0.04"), CI), DotMin = double.Parse(opt("dotmin", "0.42"), CI),
                 };
                 var mp = Edition.MarkOverview(s, view, hs, e, ms);

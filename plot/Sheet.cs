@@ -21,13 +21,16 @@ public class Plot
         return l;
     }
 
+    // Layers named "_..." are preview-only (labels on the PNG): never plotted, not counted.
+    public static bool PreviewOnly(string layer) { return layer.StartsWith("_"); }
+
     public double PenDownLength()
     {
         double s = 0;
-        foreach (var l in Layers.Values) foreach (var p in l) for (int i = 1; i < p.Count; i++) s += (p[i] - p[i - 1]).Length;
+        foreach (var l in Layers.Where(kv => !PreviewOnly(kv.Key)).Select(kv => kv.Value)) foreach (var p in l) for (int i = 1; i < p.Count; i++) s += (p[i] - p[i - 1]).Length;
         return s;
     }
-    public int Strokes() { return Layers.Values.Sum(l => l.Count); }
+    public int Strokes() { return Layers.Where(kv => !PreviewOnly(kv.Key)).Sum(kv => kv.Value.Count); }
 }
 
 public struct V2
@@ -83,6 +86,7 @@ public static class SheetIO
         int li = 1;
         foreach (var name in p.LayerOrder)
         {
+            if (Plot.PreviewOnly(name)) continue;
             sb.AppendFormat(CI, "<g inkscape:groupmode=\"layer\" inkscape:label=\"{0} {1}\" fill=\"none\" stroke=\"black\" stroke-width=\"{2}\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n", li++, name, p.PenWidth);
             foreach (var s in p.Layers[name])
             {

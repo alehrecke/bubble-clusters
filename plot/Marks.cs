@@ -28,11 +28,43 @@ public class MarkSettings
     public double DotLength = 0.22;        // each dot is a tiny tick so the pen leaves a mark
     // ink drift
     public double Drift = 2.2;             // flow displacement at the cluster's edge, mm
+    public string Tag = "";                // extra text for the preview label (e.g. the round)
+
+    // Names for the settings (Alex, 2026-10-19: "give each of these settings a name"), shown on the PNG previews
+    // and accepted on the command line in place of the kind.
+    public static readonly Dictionary<string, string> Names = new Dictionary<string, string>
+    {
+        { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
+        { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" },
+    };
+
+    public static string Resolve(string kindOrName)
+    {
+        string k = kindOrName.Trim();
+        foreach (var kv in Names) if (string.Equals(kv.Value, k, StringComparison.OrdinalIgnoreCase)) return kv.Key;
+        return k.ToLowerInvariant();
+    }
+
+    public static string NameOf(string kind) { string n; return Names.TryGetValue(kind, out n) ? n : kind; }
 }
 
 public static partial class Edition
 {
     public static Plot MarkOverview(FoamSolver s, View v, HatchStyle baseSt, EditionSettings e, MarkSettings ms)
+    {
+        var p = MarkOverviewRaw(s, v, baseSt, e, ms);
+        AddLabel(p, MarkSettings.NameOf(ms.Kind) + "  (" + ms.Kind + ")" + (ms.Tag != "" ? "  " + ms.Tag : "") + "  SEED " + v.Seed);
+        return p;
+    }
+
+    // Preview-only label along the bottom-left of the sheet.
+    public static void AddLabel(Plot p, string text, double h = 3.2)
+    {
+        p.Layer("_label").AddRange(Label.Text(text, 6, p.Height - 6 - h, h));
+    }
+
+    static Plot MarkOverviewRaw(FoamSolver s, View v, HatchStyle baseSt, EditionSettings e, MarkSettings ms)
     {
         var p = NewPlot(e);
         var rng = new Random(v.Seed * 7 + 1);

@@ -418,7 +418,7 @@ public static partial class Edition
             svg = Path.Combine(dir, name + ".svg");
             SheetIO.WriteSvg(p, svg, title);
         }
-        SheetIO.WritePng(p, png, e.PreviewPxPerMm, new Dictionary<string, double> { { "context", 0.45 }, { "hidden", 0.5 }, { "inner", 0.55 }, { "innerborders", 0.6 }, { "background", 0.8 } });
+        SheetIO.WritePng(p, png, e.PreviewPxPerMm, new Dictionary<string, double> { { "context", 0.45 }, { "hidden", 0.5 }, { "inner", 0.55 }, { "innerborders", 0.6 }, { "background", 0.8 }, { "_label", 0.9 } });
         double len = p.PenDownLength();
         int strokes = p.Strokes();
         return new Dictionary<string, object>
