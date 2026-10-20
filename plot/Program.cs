@@ -35,13 +35,15 @@ public static class Program
         }
         string cmd = args[0];
         Func<string, string, string> opt = (name, def) => { int i = Array.IndexOf(args, "--" + name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : def; };
-        string style = opt("style", cmd == "preview" ? "both" : "short");
-        string field = opt("field", "light");
-        bool a3 = opt("paper", "a4") == "a3";
+        // Defaults = Alex's settings (2026-10-19): A3, 9-up bubble pages, mixed strokes, border field, dramatic light,
+        // density 1.5, context sheets with the whole border network. Override any of them with the flag.
+        string style = opt("style", "mixed");
+        string field = opt("field", "border");
+        bool a3 = opt("paper", "a3") == "a3";
         // --tiles 4|9: bubble sheets per A3 page (2x2 A5 tiles or 3x3 tiles of 99x140 mm).
-        int perSide = opt("tiles", "4") == "9" ? 3 : 2, perPage = perSide * perSide;
+        int perSide = opt("tiles", "9") == "9" ? 3 : 2, perPage = perSide * perSide;
         // --density f: hatching lines f times closer (all spacings / f); darkest spacing floored at the pen width.
-        double density = double.Parse(opt("density", "1"), CI);
+        double density = double.Parse(opt("density", "1.5"), CI);
         Func<HatchStyle, HatchStyle> dense = h =>
         {
             if (density == 1) return h;
@@ -50,15 +52,15 @@ public static class Program
             return h;
         };
         var styles = style == "both" ? new[] { "short", "long" } : style == "all" ? new[] { "short", "long", "mixed" } : new[] { style };
-        string light = opt("light", "classic");
+        string light = opt("light", "dramatic");
         bool outline = opt("outline", "on") != "off";
         var fields = field == "all" ? new[] { "light", "facet", "border" } : new[] { field };
         double swirl = double.Parse(opt("swirl", "0"), CI);
         string hidden = opt("hidden", null);
         string extra = (swirl > 0 ? "-swirl" + (int)Math.Round(swirl * 100) : "") + (hidden != null ? "-hidden" + (hidden == "dash" ? "dash" : "") : "")
                      + (light == "dramatic" ? "-dramatic" : "") + (outline ? "" : "-nooutline")
-                     + (opt("density", "1") != "1" ? "-dense" + opt("density", "1") : "")
-                     + (opt("context", "visible") != "visible" ? "-ctx" + opt("context", "visible") : "");
+                     + (opt("density", "1.5") != "1.5" ? "-dense" + opt("density", "1.5") : "")
+                     + (opt("context", "all") != "all" ? "-ctx" + opt("context", "all") : "");
         var variants = (from st in styles from f in fields select new { Style = st, Field = f, Tag = (f == "light" ? st : st + "-" + f) + extra }).ToList();
 
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "editions"));
@@ -68,7 +70,7 @@ public static class Program
         Func<int, EditionSettings> settings = seed => new EditionSettings
         {
             Seed = seed, Count = int.Parse(opt("count", "0")), DetailBatches = int.Parse(opt("detail", "0")),
-            Light = light, Outline = outline, ContextLines = opt("context", "visible"),
+            Light = light, Outline = outline, ContextLines = opt("context", "all"),
             RMin = double.Parse(opt("rmin", "0.3"), CI), RMax = double.Parse(opt("rmax", "1.9"), CI),
         };
 
@@ -126,7 +128,7 @@ public static class Program
             { "radii", bubbles.Select(k => Math.Round(s.DesiredRadius(k), 3)).ToList() },
             { "view", new Dictionary<string, object> { { "azimuthDeg", Math.Round(view.Azimuth * 180 / Math.PI, 1) }, { "elevationDeg", Math.Round(view.Elevation * 180 / Math.PI, 1) } } },
             { "sheet", a3 ? "A3 portrait 297x420 mm: overview full sheet, bubble sheets " + perPage + "-up; pen 0.3 mm" : "A4 portrait 210x297 mm, pen 0.3 mm" },
-            { "density", density },
+            { "density", density }, { "variant", e.Variant },
         };
         var sheets = new List<object>();
         string prefix = a3 ? "a3_" : "";

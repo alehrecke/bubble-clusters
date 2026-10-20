@@ -29,6 +29,7 @@ public class EditionSettings
     // Context sheets: "visible" = the rest of the cluster with hidden lines removed (front borders + silhouette);
     // "all" = its whole Plateau-border network, back borders too (an X-ray of the foam); "dash" = back borders dashed.
     public string ContextLines = "visible";
+    public int Variant = 0;            // which variant of the seed settled (0 = the seed itself; see Edition.Generate)
     public bool Outline = true;        // Plateau-border arcs + silhouettes   // one sheet (A4); A5 tiles for 4-up A3 pages
 }
 
@@ -37,9 +38,29 @@ public static class Edition
     static readonly CultureInfo CI = CultureInfo.InvariantCulture;
 
     // ---------- cluster ----------
+    // A cluster is only used once it has settled: relaxed AND no pinched films (two films of a border folded
+    // together, which plot as thorns). Seed 8150 on 2026-10-19 relaxed with 0 rearrangements and three thorns.
+    // If forced rearrangements can't clear the pinches, the next variant of the seed is tried (seed*1000+1, ...);
+    // the variant used is in e.Variant / the manifest, so the edition still regenerates exactly.
     public static FoamSolver Generate(EditionSettings e, string cacheDir, Action<string> log)
     {
-        var rng = new Random(e.Seed);
+        FoamSolver best = null; Stress bestStress = null;
+        for (int attempt = 0; attempt < 4; attempt++)
+        {
+            int seed = attempt == 0 ? e.Seed : e.Seed * 1000 + attempt;
+            var s = GenerateOne(e, seed, log);
+            var st = Settle(s, log);
+            if (st.Settled) { e.Variant = attempt; return s; }
+            if (best == null || st.PinchedBorders < bestStress.PinchedBorders) { best = s; bestStress = st; e.Variant = attempt; }
+            log("  not settled (" + st + "); trying variant " + (attempt + 1) + " of seed " + e.Seed);
+        }
+        log("  WARNING: no variant settled cleanly; using variant " + e.Variant + " (" + bestStress + ")");
+        return best;
+    }
+
+    static FoamSolver GenerateOne(EditionSettings e, int seed, Action<string> log)
+    {
+        var rng = new Random(seed);
         int n = e.Count > 0 ? e.Count : rng.Next(16, 27);
         var r = new List<double>(); var c = new List<Vec3>();
         for (int i = 0; i < n; i++) r.Add(e.RMin + (e.RMax - e.RMin) * Math.Pow(rng.NextDouble(), e.SizeSkew));
@@ -54,16 +75,15 @@ public static class Edition
         // Cell size: about a fifth of the smallest radius, coarser if the mesh would get too big.
         double area = r.Sum(x => 4 * Math.PI * x * x);
         double h = Math.Max(r.Min() / 5, Math.Sqrt(area / (0.433 * e.TriangleBudget)));
-        string objPath = Path.Combine(cacheDir, "cluster.obj"), radPath = Path.Combine(cacheDir, "cluster.txt");
         string info;
         var mesh = MobiusMesher.Build(c, r, h, out info);
         var s = new FoamSolver(mesh, new SolverSettings { Rearrange = true });
         s.SetTargetRadii(r);
-        log(string.Format(CI, "cluster: {0} bubbles, r {1:F2}..{2:F2}, cell {3:F3}, {4} triangles", n, r.Min(), r.Max(), h, mesh.T.Count));
+        log(string.Format(CI, "cluster (seed {5}): {0} bubbles, r {1:F2}..{2:F2}, cell {3:F3}, {4} triangles", n, r.Min(), r.Max(), h, mesh.T.Count, seed));
         Relax(s, log);
         if (e.DetailBatches > 0)
         {
-            var drng = new Random(e.Seed * 31 + 7);
+            var drng = new Random(seed * 31 + 7);
             for (int b = 0; b < e.DetailBatches; b++)
             {
                 var picks = BorderDetail.Choose(s, new BorderDetailSettings { PerBatch = 6, Where = 1 }, drng);
@@ -77,17 +97,80 @@ public static class Edition
         return s;
     }
 
-    static void Relax(FoamSolver s, Action<string> log)
+    static void Relax(FoamSolver s, Action<string> log, int minSteps = 600)
     {
         double last = double.MaxValue;
+        int start = s.Steps;
         for (int block = 0; block < 40; block++)
         {
             for (int i = 0; i < 200; i++) s.Step();
             s.RearrangeLog.Clear();
-            if (s.Steps > 600 && Math.Abs(last - s.Area) < 1e-4 * s.Area && !s.RebuildPending) break;
+            if (s.Steps - start > minSteps && Math.Abs(last - s.Area) < 1e-4 * s.Area && !s.RebuildPending) break;
             last = s.Area;
         }
         log(string.Format(CI, "  relaxed: {0} steps, {1} rearrangements; {2}", s.Steps, s.Rearrangements, FoamAnalysis.Report(s).Split('\n')[2]));
+    }
+
+    public class Stress
+    {
+        public int PinchedEdges, PinchedBorders;
+        public double WorstAngle = 180;    // smallest angle between two films at any border edge (ideal 120)
+        public bool Settled { get { return PinchedBorders == 0; } }
+        public override string ToString()
+        {
+            return string.Format(CI, "{0} pinched borders ({1} edges), smallest film angle {2:F0} deg", PinchedBorders, PinchedEdges, WorstAngle);
+        }
+    }
+
+    // Pinched film = at a border edge, two of the three films meet at under PinchDeg (ideal 120). A border
+    // counts as pinched when at least two of its edges are (one alone is usually a single bad triangle).
+    public static Stress MeasureStress(FoamSolver s, double pinchDeg = 30)
+    {
+        var m = s.Mesh;
+        var st = new Stress();
+        var perBorder = new Dictionary<string, int>();
+        foreach (var kv in m.EdgeTris())
+        {
+            if (kv.Value.Count != 3) continue;
+            int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
+            Vec3 ed = (m.V[b] - m.V[a]).Normalized(), mid = (m.V[a] + m.V[b]) * 0.5;
+            var dirs = new Vec3[3]; var regions = new SortedSet<int>();
+            for (int k = 0; k < 3; k++)
+            {
+                var t = m.T[kv.Value[k]];
+                regions.Add(t.Neg); regions.Add(t.Pos);
+                int o = t.A != a && t.A != b ? t.A : (t.B != a && t.B != b ? t.B : t.C);
+                Vec3 d = m.V[o] - mid;
+                dirs[k] = (d - ed * Vec3.Dot(d, ed)).Normalized();
+            }
+            double mn = 180;
+            for (int i = 0; i < 3; i++)
+                for (int j = i + 1; j < 3; j++)
+                    mn = Math.Min(mn, Math.Acos(Math.Max(-1, Math.Min(1, Vec3.Dot(dirs[i], dirs[j])))) * 180 / Math.PI);
+            st.WorstAngle = Math.Min(st.WorstAngle, mn);
+            if (mn >= pinchDeg) continue;
+            st.PinchedEdges++;
+            string key = string.Join("-", regions);
+            perBorder[key] = perBorder.ContainsKey(key) ? perBorder[key] + 1 : 1;
+        }
+        st.PinchedBorders = perBorder.Count(kv => kv.Value >= 2);
+        return st;
+    }
+
+    // Relaxed -> check for pinched films -> forced rearrangement + relax, up to 6 rounds.
+    static Stress Settle(FoamSolver s, Action<string> log)
+    {
+        var st = MeasureStress(s);
+        for (int round = 0; round < 6 && !st.Settled; round++)
+        {
+            log("  settle round " + (round + 1) + ": " + st + " -> forced rearrangement");
+            s.ForceRearrange("settle: " + st.PinchedBorders + " pinched borders");
+            s.RearrangeLog.Clear();
+            Relax(s, log, 400);
+            st = MeasureStress(s);
+        }
+        log("  settle: " + (st.Settled ? "clean (" + st + ")" : "still pinched (" + st + ")"));
+        return st;
     }
 
     // ---------- view ----------
@@ -322,10 +405,19 @@ public static class Edition
     {
         SheetIO.Optimize(p);
         Directory.CreateDirectory(dir);
-        string svg = Path.Combine(dir, name + ".svg"), png = Path.Combine(dir, name + ".png");
-        SheetIO.WriteSvg(p, svg, title);
+        // One SVG per sheet, the plotter-ready one (Alex, 2026-10-19): portrait sheets are written turned 90 degrees
+        // for the AxiDraw A3 (load the paper landscape); the PNG preview stays upright.
+        string png = Path.Combine(dir, name + ".png"), svg;
         if (e.PlotterCopy && p.Height > p.Width)
-            SheetIO.WriteSvg(SheetIO.Rotated(p), Path.Combine(dir, name + "_plotter-landscape.svg"), title + " [rotated for AxiDraw A3, load paper landscape]");
+        {
+            svg = Path.Combine(dir, name + "_plotter-landscape.svg");
+            SheetIO.WriteSvg(SheetIO.Rotated(p), svg, title + " [rotated for AxiDraw A3, load paper landscape]");
+        }
+        else
+        {
+            svg = Path.Combine(dir, name + ".svg");
+            SheetIO.WriteSvg(p, svg, title);
+        }
         SheetIO.WritePng(p, png, e.PreviewPxPerMm, new Dictionary<string, double> { { "context", 0.45 }, { "hidden", 0.5 } });
         double len = p.PenDownLength();
         int strokes = p.Strokes();

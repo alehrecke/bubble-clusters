@@ -832,6 +832,21 @@ public class FoamSolver
         }
     }
 
+    // Rebuild now, synchronously, regardless of debounce / cooldown / ignore lists (headless "settle" passes:
+    // bubbleplot forces this when pinched films remain after relaxing). Returns the log line, or null if a
+    // background rebuild is pending.
+    public string ForceRearrange(string why, List<Rearranger.Event> events = null)
+    {
+        if (pendingJob != null) return null;
+        events = events ?? new List<Rearranger.Event>();
+        var job = Rearranger.Prepare(this, why, events);
+        foreach (var e in events) if (e.Grow != null) job.Grow.AddRange(e.Grow);
+        job.Run();
+        int before = RearrangeLog.Count;
+        Finish(job);
+        return RearrangeLog.Count > before ? RearrangeLog[RearrangeLog.Count - 1] : why;
+    }
+
     // Apply a finished background rebuild (called at the start of each step).
     void PollRebuild()
     {

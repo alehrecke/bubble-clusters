@@ -4,6 +4,20 @@ Headless (no Rhino): seeded random cluster → relaxed with the same solver core
 surface-following hatching + Plateau-border arcs + silhouettes, hidden lines removed → A4 SVGs for the
 AxiDraw (0.3 mm fine liner) + PNG previews on cream paper.
 
+## Defaults (Alex's settings, 2026-10-19)
+
+`bubbleplot edition --seed N` alone gives: A3 (`--paper a3`), bubble sheets 9-up (`--tiles 9`), `--style mixed --field border
+--light dramatic --density 1.5`, context sheets with the whole border network (`--context all`; `dash` = back borders dashed,
+`visible` = the old front-only look). Any flag overrides its default.
+
+**One SVG per sheet:** only the plotter-ready file (`*_plotter-landscape.svg`, turned 90 degrees for the AxiDraw A3: load the
+paper landscape), plus an upright PNG preview.
+
+**Settled clusters only:** after relaxing, `Edition.Settle` measures pinched films (`MeasureStress`: a border with 2+ edges where
+two films meet under 30 deg; these plot as thorns) and forces rearrangements until there are none (up to 6 rounds). If a seed
+still won't settle, variants seed*1000+1.. are tried; the variant used is in the manifest. Seed 8150: 6 pinched borders (two
+films 2 deg apart) → 1 forced rearrangement → clean (smallest film angle 71 deg), thorns gone.
+
 ## Run
 
 ```
