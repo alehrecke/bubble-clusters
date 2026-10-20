@@ -146,6 +146,9 @@ Full sheet with a 10 mm paper margin. The solved foam is saved (`bed.obj` + `win
 - `windows` (one pen): the footprints are transparent, so each opening looks up into its own bubble: one scene of ALL films
   (`Scene.Surface(m, -2)`, two-sided), nearest-from-below = each room's ceiling, stippled (edge-on walls at the rims dark, the
   ceiling overhead light), the rooms' visible facet edges as fine lines, the meniscus plane on top. Seed 3301: ~92k strokes, ~7 h.
+- `deep-windows` (one pen): transparent windows. FilmStack.cs finds every film along each vertical sight line (depth peeling);
+  4 layers of walls stippled, tone x 0.62 and dots sparser per layer; room edges by films in front: crisp / dashed / dotted /
+  sparse dots / hidden. Seed 3301: ~115k strokes, ~8.5 h.
 Seed 3301 took ~50 min to solve (234k triangles); settle ended with 7 pinched borders (not fully clean, not visible in the drawings).
 
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.

@@ -98,6 +98,55 @@ public static partial class Edition
                 else fine.AddRange(one);
             }
         }
+        else if (variant == "deep-windows")
+        {
+            // Transparent: every film along each sight line, not just the first (FilmStack = depth peeling).
+            // Each deeper layer of walls is stippled more sparsely (tone x 0.62 per layer, 4 layers); the rooms'
+            // edges change with the number of films in front of them: crisp, dashed, dotted, sparse dots.
+            var stack = new FilmStack(s.Mesh, 2.5 * s.TargetEdge);
+            Func<V2, Vec3> world = q => new Vec3((q.X - skin.Ox) / skin.S, (q.Y - skin.Oy) / skin.S, 0);
+            var light = skin.Light;
+            for (int layer = 0; layer < 4; layer++)
+            {
+                var lms = new MarkSettings { DotMin = 0.36 + 0.06 * layer, DotMax = 4.5, DotGamma = 1.6 };
+                fine.AddRange(StackStipple(stack, world, layer, 0.95 * Math.Pow(0.62, layer), light, lms, rng, x0, y0, x1, y1, F));
+            }
+            double eps = 1.5 * s.TargetEdge;
+            foreach (var bd in borders)
+            {
+                if (bd.OnHost) continue;
+                var pts = new List<Vec3>(bd.Points);
+                if (bd.Closed && pts.Count > 0) pts.Add(pts[0]);
+                // Densify in 3D, then group consecutive points by how many films lie in front (below) them.
+                var dense = new List<Vec3>();
+                for (int i = 0; i + 1 < pts.Count; i++)
+                {
+                    int n = Math.Max(1, (int)Math.Ceiling((pts[i + 1] - pts[i]).Length / (0.5 * s.TargetEdge)));
+                    for (int j = 0; j < n; j++) dense.Add(pts[i] + (pts[i + 1] - pts[i]) * ((double)j / n));
+                }
+                if (pts.Count > 0) dense.Add(pts[pts.Count - 1]);
+                int prev = -1; var run = new List<V2>();
+                Action<int> flush = idx =>
+                {
+                    if (run.Count >= 2 && idx >= 0 && idx < 4)
+                    {
+                        var sm2 = new List<List<V2>> { Smooth2(run) };
+                        if (idx == 0) fine.AddRange(sm2);
+                        else if (idx == 1) fine.AddRange(Dashes(sm2[0], 1.6, 0.6));
+                        else fine.AddRange(DotLines(sm2, idx == 2 ? 0.5 : 0.9, 0.03, new MarkSettings(), rng));
+                    }
+                    run = new List<V2>();
+                };
+                foreach (var q3 in dense)
+                {
+                    int idx = stack.Query(q3.X, q3.Y).Count(h => h.Z < q3.Z - eps);
+                    if (idx != prev && run.Count > 0) { var last = run[run.Count - 1]; flush(prev); run.Add(last); }
+                    prev = idx;
+                    run.Add(skin.Project(q3));
+                }
+                flush(prev);
+            }
+        }
         else if (variant == "windows")
         {
             // The footprints are transparent: looking up through each one we see the inside of that bubble, its
@@ -385,6 +434,69 @@ public static partial class Edition
             for (int i = 0; i <= n; i++) { double a = 2 * Math.PI * i / n; ring.Add(q + new V2(Math.Cos(a), Math.Sin(a)) * r); }
             res.Add(ring);
         }
+        return res;
+    }
+
+    // Stipple of the layer-th film along each sight line (0 = the nearest), tone from its facing to the light.
+    static List<List<V2>> StackStipple(FilmStack stack, Func<V2, Vec3> world, int layer, double toneScale, Vec3 light,
+                                       MarkSettings ms, Random rng, double x0, double y0, double x1, double y1, Func<V2, double> F)
+    {
+        var dots = new List<List<V2>>();
+        double cell = ms.DotMin * 0.7;
+        var grid = new Dictionary<long, List<V2>>(LongKey.Comparer);
+        Func<long, long, long> key = (x, y) => unchecked((x * 73856093L) ^ (y * 19349663L));
+        int tries = (int)((x1 - x0) * (y1 - y0) / (ms.DotMin * ms.DotMin) * 2.5);
+        var up = new Vec3(0, 0, 1);
+        for (int t = 0; t < tries; t++)
+        {
+            var q = new V2(x0 + rng.NextDouble() * (x1 - x0), y0 + rng.NextDouble() * (y1 - y0));
+            var w = world(q);
+            var hits = stack.Query(w.X, w.Y);
+            if (hits.Count <= layer) continue;
+            var n = hits[layer].N;
+            if (Vec3.Dot(n, up) > 0) n = n * -1;                   // two-sided: turned toward the viewer below
+            double tone = 1 - Math.Max(0, Vec3.Dot(n, light)) + 0.25 * Math.Pow(1 - Math.Abs(Vec3.Dot(n, up)), 2);
+            tone = Math.Min(1, tone) * toneScale * (0.75 + 0.25 * F(q));
+            tone = Math.Max(0, (tone - 0.08) / 0.92);
+            if (tone < 0.02) continue;
+            double r = Math.Min(ms.DotMax, ms.DotMin / Math.Pow(tone, ms.DotGamma));
+            r *= 1 + 0.22 * Noise(q.X / 9, q.Y / 9, 3 + layer) + 0.08 * Noise(q.X / 2.2, q.Y / 2.2, 5 + layer);
+            if (r >= ms.DotMax) continue;
+            long cx = (long)Math.Floor(q.X / cell), cy = (long)Math.Floor(q.Y / cell);
+            int rr = (int)Math.Ceiling(r / cell);
+            bool ok = true;
+            for (long gy = cy - rr; gy <= cy + rr && ok; gy++)
+                for (long gx = cx - rr; gx <= cx + rr && ok; gx++)
+                {
+                    List<V2> l;
+                    if (!grid.TryGetValue(key(gx, gy), out l)) continue;
+                    foreach (var o in l) if ((o - q).Length < r) { ok = false; break; }
+                }
+            if (!ok) continue;
+            List<V2> cl;
+            long k = key(cx, cy);
+            if (!grid.TryGetValue(k, out cl)) { cl = new List<V2>(2); grid[k] = cl; }
+            cl.Add(q);
+            double a = rng.NextDouble() * Math.PI, len = ms.DotLength * (0.7 + 0.6 * rng.NextDouble());
+            var d = new V2(Math.Cos(a), Math.Sin(a)) * (len / 2);
+            dots.Add(new List<V2> { q - d, q + d });
+        }
+        return dots;
+    }
+
+    // A polyline as dashes (on mm, off mm).
+    static List<List<V2>> Dashes(List<V2> l, double on, double off)
+    {
+        var res = new List<List<V2>>();
+        var pts = Densify(l, 0.1).ToList();
+        double along = 0; var cur = new List<V2>();
+        for (int i = 0; i < pts.Count; i++)
+        {
+            if (i > 0) along += (pts[i] - pts[i - 1]).Length;
+            if (along % (on + off) < on) cur.Add(pts[i]);
+            else if (cur.Count > 0) { if (cur.Count >= 2) res.Add(cur); cur = new List<V2>(); }
+        }
+        if (cur.Count >= 2) res.Add(cur);
         return res;
     }
 
