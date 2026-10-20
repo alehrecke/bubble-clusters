@@ -116,6 +116,9 @@ plots. Default quad: glass-stipple | cross | inkdrift | wild. Stipple spacing is
 sparse lights). `cross` adds per-film angle jitter (6/16/22 deg per pass), +-30% spacing noise and seed-drawn pass angles. `inkdrift`
 pushes strokes along a swirling noise flow (up to 2.2 mm at the cluster edge, growing along each stroke), with pooled double
 passes in the darks. `wild` is natural at 0.5 mm wobble. Also RotateJitter, SepJitter, JitterSeed.
+Round 3 default quad: glass-dots (skin and walls both stippled, walls sparser, borders kept) | cross (back to 1.1-1.25x spacing,
+smaller jitter: delicate) | inkdrift (1.1 mm drift, no breaks, outline wobbles and drifts with the hatching) | wild-bg (no outlines;
+hatched ground with nested 4/2/1/0.5 mm line families by tone: cast shadow away from the light plus a dark contact halo).
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
 ## Output: `editions/<seed>/` (git-ignored)

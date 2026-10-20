@@ -128,7 +128,7 @@ public static class Program
             if (args.Contains("--quad"))
             {
                 // Four kinds on one A3 page (A5 quadrants, left to right, top to bottom) to plot side by side.
-                var kinds = opt("marks", "glass-stipple,cross,inkdrift,wild").Split(',').Select(k => k.Trim()).Take(4).ToList();
+                var kinds = opt("marks", "glass-dots,cross,inkdrift,wild-bg").Split(',').Select(k => k.Trim()).Take(4).ToList();
                 e.SheetW = A3W / 2; e.SheetH = A3H / 2;
                 var tiles = new List<Plot>();
                 foreach (var kind in kinds)

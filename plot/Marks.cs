@@ -37,9 +37,11 @@ public static partial class Edition
         var p = NewPlot(e);
         var rng = new Random(v.Seed * 7 + 1);
         double wob = ms.Wobble >= 0 ? ms.Wobble
-                   : ms.Kind == "natural" ? 0.12 : ms.Kind == "wild" ? 0.5 : ms.Kind == "cross" ? 0.1
-                   : ms.Kind == "inkdrift" ? 0.08 : ms.Kind.StartsWith("glass") ? 0.06 : 0;
-        if (ms.Kind == "wild") { ms.WobbleWavelength = 6; ms.Breaks = 0.015; }
+                   : ms.Kind == "natural" ? 0.12 : ms.Kind.StartsWith("wild") ? 0.5 : ms.Kind == "cross" ? 0.05
+                   : ms.Kind == "inkdrift" ? 0.1 : ms.Kind.StartsWith("glass") ? 0.06 : 0;
+        if (ms.Kind.StartsWith("wild")) { ms.WobbleWavelength = 6; ms.Breaks = 0.015; }
+        // Round 3: ink drift calmer (2.2 mm was too much) and without breaks (they read as periodic white spots).
+        if (ms.Kind == "inkdrift") { ms.Drift = 1.1; ms.Breaks = 0; }
 
         if (ms.Kind.StartsWith("glass"))
         {
@@ -50,6 +52,17 @@ public static partial class Edition
             var inSt = Clone(baseSt); inSt.Field = "facet"; inSt.Hyper = false; inSt.ToneScale = 0.8;
             inSt.SepMin *= 1.25; inSt.SepMax *= 1.1;
             var inner = Frame(s, v, -1, OverviewFrame, p, classic, inSt, fit);
+            if (ms.Kind == "glass-dots")
+            {
+                // All stipple: the walls in slightly sparser dots than the skin, so the skin still reads in front.
+                var inMs = new MarkSettings { DotMin = ms.DotMin * 1.25, DotMax = ms.DotMax, DotGamma = ms.DotGamma, DotLength = ms.DotLength };
+                p.Layer("inner").AddRange(Stipple(inner, inMs, rng, 0.8));
+                p.Layer("innerborders").AddRange(Hidden(s, skin, 0, false));
+                var dskin = Frame(s, v, 0, OverviewFrame, p, e, Clone(baseSt), fit);
+                p.Layer("hatch").AddRange(Stipple(dskin, ms, rng, 1.05));
+                if (e.Outline) p.Layer("outline").AddRange(Outlines(s, dskin, 0));
+                return p;
+            }
             if (ms.Kind == "glass-stipple")
                 p.Layer("inner").AddRange(Stipple(inner, ms, rng, 0.85));
             else
@@ -70,8 +83,9 @@ public static partial class Edition
         else if (ms.Kind == "inkdrift")
         {
             var lines = Hatcher.Hatch(sc, baseSt, Axes(sc, v.Seed), new Random(v.Seed * 7 + 1));
-            p.Layer("hatch").AddRange(InkDrift(Wobble(lines, wob, ms, rng), sc, ms, rng, true));
-            if (e.Outline) p.Layer("outline").AddRange(InkDrift(Outlines(s, sc, 0), sc, ms, rng, false, 0.5));
+            p.Layer("hatch").AddRange(InkDrift(Wobble(lines, wob, ms, rng, false), sc, ms, rng, true));
+            // The outline wobbles and drifts with the same field as the hatching, so they stay together.
+            if (e.Outline) p.Layer("outline").AddRange(InkDrift(Wobble(Outlines(s, sc, 0), wob, ms, rng, false), sc, ms, rng, false));
             return p;
         }
         else if (ms.Kind == "cross")
@@ -82,22 +96,28 @@ public static partial class Edition
             var prng = new Random(v.Seed * 13 + 5);
             var passes = new[]
             {
-                new { Rot = 0.0, From = 0.0, Open = 1.6, Jit = 6.0 },
-                new { Rot = 60 + 25 * prng.NextDouble(), From = 0.34 + 0.08 * prng.NextDouble(), Open = 1.5, Jit = 16.0 },
-                new { Rot = -(25 + 25 * prng.NextDouble()), From = 0.64 + 0.08 * prng.NextDouble(), Open = 1.4, Jit = 22.0 },
+                // Round 3: denser and finer again (round 2 opened the passes 1.4-1.6x and lost the delicacy).
+                new { Rot = 0.0, From = 0.0, Open = 1.1, Jit = 4.0 },
+                new { Rot = 60 + 25 * prng.NextDouble(), From = 0.36 + 0.08 * prng.NextDouble(), Open = 1.2, Jit = 10.0 },
+                new { Rot = -(25 + 25 * prng.NextDouble()), From = 0.66 + 0.08 * prng.NextDouble(), Open = 1.25, Jit = 14.0 },
             };
-            ms.Breaks = Math.Max(ms.Breaks, 0.07);
             int i = 0;
             foreach (var ps in passes)
             {
                 var st = Clone(baseSt); st.RotateDeg = ps.Rot; st.ToneFrom = ps.From;
-                st.RotateJitter = ps.Jit; st.SepJitter = 0.3; st.JitterSeed = v.Seed * 3 + i;
+                st.RotateJitter = ps.Jit; st.SepJitter = 0.15; st.JitterSeed = v.Seed * 3 + i;
                 st.SepMin *= ps.Open; st.SepMax *= ps.Open; st.HyperMin *= ps.Open; st.HyperMax *= ps.Open;
                 p.Layer("hatch").AddRange(Wobble(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + 11 * ++i)), wob, ms, rng));
             }
         }
         else
             p.Layer("hatch").AddRange(Wobble(Hatcher.Hatch(sc, baseSt, Axes(sc, v.Seed), new Random(v.Seed * 7 + 1)), wob, ms, rng));
+        if (ms.Kind == "wild-bg")
+        {
+            // No outlines: the hatched ground defines the silhouette.
+            p.Layer("background").AddRange(Wobble(Background(sc, p, v.Seed), wob * 0.6, ms, rng, false));
+            return p;
+        }
         if (e.Outline) p.Layer("outline").AddRange(Wobble(Outlines(s, sc, 0), wob * 0.5, ms, rng, false));
         return p;
     }
@@ -202,6 +222,91 @@ public static partial class Edition
             if (dbl.Count >= 2) res.Add(Hatcher.Simplify(dbl, 0.015));
         }
         return res;
+    }
+
+    // ---------- hatched ground ----------
+    // Parallel lines behind the cluster, stopping short of it (a ~0.6 mm halo). The tone is darkest in the
+    // cluster's cast shadow (the silhouette shifted away from the light) and fades with distance, plus a little
+    // noise. Lines come in nested families (every 8th, 4th, 2nd, all) switched on by tone, so the spacing goes
+    // 4 / 2 / 1 / 0.5 mm. Ragged ends at the frame edge.
+    static List<List<V2>> Background(Scene sc, Plot p, int seed)
+    {
+        var rng = new Random(seed * 31 + 7);
+        double x0 = 0.06 * p.Width, y0 = 0.05 * p.Height, x1 = 0.94 * p.Width, y1 = 0.88 * p.Height;
+        // Distance (mm) to the cluster on a 0.5 mm grid (chamfer transform).
+        double g = 0.5;
+        int gw = (int)Math.Ceiling((x1 - x0) / g) + 1, gh = (int)Math.Ceiling((y1 - y0) / g) + 1;
+        var dist = new double[gw * gh];
+        int cnt = 0;
+        for (int j = 0; j < gh; j++)
+            for (int i = 0; i < gw; i++)
+            {
+                bool c = sc.Covered(new V2(x0 + i * g, y0 + j * g));
+                dist[j * gw + i] = c ? 0 : 1e9;
+                if (c) cnt++;
+            }
+        Chamfer(dist, gw, gh, g);
+        double Rc = Math.Sqrt(cnt * g * g / Math.PI);
+        // Shadow: the distance field sampled shifted toward the light (= the silhouette shifted away from it).
+        var l2 = new V2(Vec3.Dot(sc.Light, sc.R), -Vec3.Dot(sc.Light, sc.U));
+        l2 = l2.Length > 1e-6 ? l2.Normalized() : new V2(-0.7, -0.7);
+        var shift = l2 * (0.22 * Rc);
+        Func<V2, double> D = q =>
+        {
+            int i = (int)Math.Round((q.X - x0) / g), j = (int)Math.Round((q.Y - y0) / g);
+            if (i < 0 || j < 0 || i >= gw || j >= gh) return 1e9;
+            return dist[j * gw + i];
+        };
+        Func<V2, double> tone = q => 0.34 + 0.5 * Math.Exp(-D(q + shift) / (0.22 * Rc)) + 0.22 * Math.Exp(-D(q) / 2.5) + 0.1 * Noise(q.X / 18, q.Y / 18, seed + 41);
+        double ang = (12 + 20 * rng.NextDouble()) * Math.PI / 180;
+        var dir = new V2(Math.Cos(ang), Math.Sin(ang));
+        var nrm = new V2(-dir.Y, dir.X);
+        var mid = new V2((x0 + x1) / 2, (y0 + y1) / 2);
+        double half = Math.Sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)) / 2, s0 = 0.5, step = 0.25;
+        var res = new List<List<V2>>();
+        int kmax = (int)(half / s0);
+        for (int k = -kmax; k <= kmax; k++)
+        {
+            int m = ((k % 8) + 8) % 8;
+            double thr = m == 0 ? 0 : m == 4 ? 0.3 : m % 2 == 0 ? 0.48 : 0.66;
+            double ins0 = 2.5 * rng.NextDouble(), ins1 = 2.5 * rng.NextDouble();
+            var cur = new List<V2>();
+            for (double t = -half; t <= half; t += step)
+            {
+                var q = mid + nrm * (k * s0) + dir * t;
+                bool inside = q.X > x0 + ins0 && q.X < x1 - ins1 && q.Y > y0 + ins0 && q.Y < y1 - ins1;
+                bool on = inside && D(q) > 0.6 && tone(q) + 0.06 * Noise(q.X / 3, q.Y / 3, seed + k) >= thr;
+                if (on) cur.Add(q);
+                else { if (cur.Count >= 4) res.Add(cur); cur = new List<V2>(); }
+            }
+            if (cur.Count >= 4) res.Add(cur);
+        }
+        return res.Select(l => Hatcher.Simplify(l, 0.01)).ToList();
+    }
+
+    static void Chamfer(double[] d, int w, int h, double g)
+    {
+        double dg = g * Math.Sqrt(2);
+        for (int j = 0; j < h; j++)
+            for (int i = 0; i < w; i++)
+            {
+                double v = d[j * w + i];
+                if (i > 0) v = Math.Min(v, d[j * w + i - 1] + g);
+                if (j > 0) v = Math.Min(v, d[(j - 1) * w + i] + g);
+                if (i > 0 && j > 0) v = Math.Min(v, d[(j - 1) * w + i - 1] + dg);
+                if (i < w - 1 && j > 0) v = Math.Min(v, d[(j - 1) * w + i + 1] + dg);
+                d[j * w + i] = v;
+            }
+        for (int j = h - 1; j >= 0; j--)
+            for (int i = w - 1; i >= 0; i--)
+            {
+                double v = d[j * w + i];
+                if (i < w - 1) v = Math.Min(v, d[j * w + i + 1] + g);
+                if (j < h - 1) v = Math.Min(v, d[(j + 1) * w + i] + g);
+                if (i < w - 1 && j < h - 1) v = Math.Min(v, d[(j + 1) * w + i + 1] + dg);
+                if (i > 0 && j < h - 1) v = Math.Min(v, d[(j + 1) * w + i - 1] + dg);
+                d[j * w + i] = v;
+            }
     }
 
     // ---------- hand noise ----------
