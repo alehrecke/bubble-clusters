@@ -124,8 +124,30 @@ public static class Program
         {
             // Mark-making tests: one A3 overview per kind (Marks.cs). --marks stipple,cross,natural,glass
             // [--wobble mm] [--breaks per-mm] [--dotmin mm]
-            e.SheetW = A3W; e.SheetH = A3H;
             string mdir = Path.Combine(root, "marks_" + e.Seed.ToString(CI));
+            if (args.Contains("--quad"))
+            {
+                // Four kinds on one A3 page (A5 quadrants, left to right, top to bottom) to plot side by side.
+                var kinds = opt("marks", "glass-stipple,cross,inkdrift,wild").Split(',').Select(k => k.Trim()).Take(4).ToList();
+                e.SheetW = A3W / 2; e.SheetH = A3H / 2;
+                var tiles = new List<Plot>();
+                foreach (var kind in kinds)
+                {
+                    var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
+                    var ms = new MarkSettings { Kind = kind, Wobble = double.Parse(opt("wobble", "-1"), CI) };
+                    var tp = Edition.MarkOverview(s, view, hs, e, ms);
+                    log("quadrant " + kind + ": " + tp.Strokes() + " strokes");
+                    tiles.Add(tp);
+                }
+                e.SheetW = A3W; e.SheetH = A3H;
+                var page = Edition.Tile(tiles, A3W, A3H, 2, 2);
+                string qname = "a3_quad_" + string.Join("_", kinds) + opt("tag", "");
+                var qi = Edition.Write(page, mdir, qname, "Bubble cluster " + e.Seed + " (" + string.Join(" | ", kinds) + ")", e);
+                log("A3 quad page: " + qi["strokes"] + " strokes, ~" + qi["estMinutes"] + " min -> " + qname);
+                File.WriteAllText(Path.Combine(mdir, "cluster.obj"), FoamAnalysis.ToObj(s.Mesh));
+                return 0;
+            }
+            e.SheetW = A3W; e.SheetH = A3H;
             foreach (var kind in opt("marks", "stipple,cross,natural,glass").Split(','))
             {
                 var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });

@@ -2,24 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-// Experimental mark making (2026-10-19, Alex: "more natural, some noise in the linework", stippling,
-// cross-hatching, and transparency that shows the cells behind the outer wall). One A3 overview per kind:
-//   stipple  blue-noise dots, spacing from tone, density wavering with a low-frequency noise
-//   cross    engraving cross-hatch: the surface-following pass, then crossing passes over the darker tones only
-//   natural  the house style (mixed / border / dramatic) with hand noise: wobble, path drift, small breaks
-//   glass    see-through skin: interior walls hatched underneath (own layer, other direction), outer skin light
-//            on top, the internal Plateau borders drawn
-// Any kind can take --wobble a (mm) to add the hand noise (natural = the house style + wobble).
+// Experimental mark making (Alex, 2026-10-19: "more natural, some noise in the linework", stippling,
+// cross-hatching, transparency that shows the cells behind the outer wall). Kinds:
+//   stipple        blue-noise dots, spacing DotMin / tone^DotGamma (steep: solid darks, sparse lights), wavering density
+//   cross          engraving cross-hatch: the surface-following pass, then crossing passes over the darker tones only;
+//                  each film's crossing angle jittered, spacing wandering with noise, pass angles drawn per seed
+//   natural        the house style with hand noise: sideways wander, small breaks
+//   wild           natural with the wobble cranked up (0.5 mm, longer wavelength)
+//   inkdrift       strokes pushed by a slow swirling flow, strongest at the cluster's edge, sliding further the
+//                  longer they run; dark strokes get a pooled second pass
+//   glass          see-through skin: interior walls hatched underneath (own layer), the internal Plateau borders,
+//                  the skin lighter on top
+//   glass-stipple  the same with the interior walls in stipple (walls in dots, skin in lines)
+// --wobble a (mm) overrides any kind's hand noise.
 public class MarkSettings
 {
     public string Kind = "natural";
-    public double Wobble = -1;           // perpendicular wander, mm (-1 = the kind's default)
+    public double Wobble = -1;             // perpendicular wander, mm (-1 = the kind's default)
     public double WobbleWavelength = 3.5;  // mm along the stroke
-    public double Breaks = 0.04;         // chance per mm of a small gap in a line
-    // stipple
-    public double DotMin = 0.42;         // mm between dots in the darkest tone (a bit over the pen width)
-    public double DotMax = 3.2;          // mm in the lightest tone that still gets dots
-    public double DotLength = 0.22;      // each dot is a tiny tick so the pen leaves a mark
+    public double Breaks = 0.04;           // chance per mm of a small gap in a line
+    // stipple (round 1 used 0.42 / tone^0.75: too even, no density shift)
+    public double DotMin = 0.30;           // mm between dots in the darkest tone (the pen width: darks close up)
+    public double DotMax = 4.5;            // mm in the lightest tone that still gets dots
+    public double DotGamma = 1.6;
+    public double DotLength = 0.22;        // each dot is a tiny tick so the pen leaves a mark
+    // ink drift
+    public double Drift = 2.2;             // flow displacement at the cluster's edge, mm
 }
 
 public static partial class Edition
@@ -28,8 +36,12 @@ public static partial class Edition
     {
         var p = NewPlot(e);
         var rng = new Random(v.Seed * 7 + 1);
-        double wob = ms.Wobble >= 0 ? ms.Wobble : ms.Kind == "natural" ? 0.12 : ms.Kind == "cross" ? 0.07 : ms.Kind == "glass" ? 0.06 : 0;
-        if (ms.Kind == "glass")
+        double wob = ms.Wobble >= 0 ? ms.Wobble
+                   : ms.Kind == "natural" ? 0.12 : ms.Kind == "wild" ? 0.5 : ms.Kind == "cross" ? 0.1
+                   : ms.Kind == "inkdrift" ? 0.08 : ms.Kind.StartsWith("glass") ? 0.06 : 0;
+        if (ms.Kind == "wild") { ms.WobbleWavelength = 6; ms.Breaks = 0.015; }
+
+        if (ms.Kind.StartsWith("glass"))
         {
             // Interior walls first (own pen layer, plotted first), framed exactly like the skin.
             var skin = Frame(s, v, 0, OverviewFrame, p, e, null);
@@ -38,28 +50,48 @@ public static partial class Edition
             var inSt = Clone(baseSt); inSt.Field = "facet"; inSt.Hyper = false; inSt.ToneScale = 0.8;
             inSt.SepMin *= 1.25; inSt.SepMax *= 1.1;
             var inner = Frame(s, v, -1, OverviewFrame, p, classic, inSt, fit);
-            p.Layer("inner").AddRange(Wobble(Hatcher.Hatch(inner, inSt, Axes(inner, v.Seed), new Random(v.Seed * 7 + 2)), wob, ms, rng));
-            // The internal border network (behind the skin), thin, with the walls.
+            if (ms.Kind == "glass-stipple")
+                p.Layer("inner").AddRange(Stipple(inner, ms, rng, 0.85));
+            else
+                p.Layer("inner").AddRange(Wobble(Hatcher.Hatch(inner, inSt, Axes(inner, v.Seed), new Random(v.Seed * 7 + 2)), wob, ms, rng));
+            // The internal border network (behind the skin), with the walls.
             p.Layer("innerborders").AddRange(Hidden(s, skin, 0, false));
             // The skin on top, lighter, so the walls read through it.
-            var outSt = Clone(baseSt); outSt.ToneScale = 0.6;
+            var outSt = Clone(baseSt); outSt.ToneScale = ms.Kind == "glass-stipple" ? 0.55 : 0.6;
             var outer = Frame(s, v, 0, OverviewFrame, p, e, outSt, fit);
             p.Layer("hatch").AddRange(Wobble(Hatcher.Hatch(outer, outSt, Axes(outer, v.Seed), new Random(v.Seed * 7 + 1)), wob, ms, rng));
             if (e.Outline) p.Layer("outline").AddRange(Outlines(s, outer, 0));
             return p;
         }
+
         var sc = Frame(s, v, 0, OverviewFrame, p, e, baseSt);
         if (ms.Kind == "stipple")
-            p.Layer("hatch").AddRange(Stipple(sc, baseSt, ms, rng));
+            p.Layer("hatch").AddRange(Stipple(sc, ms, rng, 1));
+        else if (ms.Kind == "inkdrift")
+        {
+            var lines = Hatcher.Hatch(sc, baseSt, Axes(sc, v.Seed), new Random(v.Seed * 7 + 1));
+            p.Layer("hatch").AddRange(InkDrift(Wobble(lines, wob, ms, rng), sc, ms, rng, true));
+            if (e.Outline) p.Layer("outline").AddRange(InkDrift(Outlines(s, sc, 0), sc, ms, rng, false, 0.5));
+            return p;
+        }
         else if (ms.Kind == "cross")
         {
             // Each pass on its own spacing grid (passes cross freely). The first pass is opened up, since the
-            // crossing passes add the darkness back.
-            var passes = new[] { new { Rot = 0.0, From = 0.0, Open = 1.6 }, new { Rot = 72.0, From = 0.38, Open = 1.5 }, new { Rot = -38.0, From = 0.68, Open = 1.4 } };
+            // crossing passes add the darkness back. Randomness: per-film angle jitter, spacing noise, pass
+            // angles and thresholds drawn per seed, more breaks.
+            var prng = new Random(v.Seed * 13 + 5);
+            var passes = new[]
+            {
+                new { Rot = 0.0, From = 0.0, Open = 1.6, Jit = 6.0 },
+                new { Rot = 60 + 25 * prng.NextDouble(), From = 0.34 + 0.08 * prng.NextDouble(), Open = 1.5, Jit = 16.0 },
+                new { Rot = -(25 + 25 * prng.NextDouble()), From = 0.64 + 0.08 * prng.NextDouble(), Open = 1.4, Jit = 22.0 },
+            };
+            ms.Breaks = Math.Max(ms.Breaks, 0.07);
             int i = 0;
             foreach (var ps in passes)
             {
                 var st = Clone(baseSt); st.RotateDeg = ps.Rot; st.ToneFrom = ps.From;
+                st.RotateJitter = ps.Jit; st.SepJitter = 0.3; st.JitterSeed = v.Seed * 3 + i;
                 st.SepMin *= ps.Open; st.SepMax *= ps.Open; st.HyperMin *= ps.Open; st.HyperMax *= ps.Open;
                 p.Layer("hatch").AddRange(Wobble(Hatcher.Hatch(sc, st, Axes(sc, v.Seed), new Random(v.Seed * 7 + 11 * ++i)), wob, ms, rng));
             }
@@ -74,23 +106,25 @@ public static partial class Edition
     // Dart throwing with a tone-dependent radius (variable-radius Poisson disc): every dot keeps at least
     // r(tone) from the others, so dots pack tight in the darks and spread in the lights; a low-frequency
     // noise makes the density waver like hand stippling.
-    static List<List<V2>> Stipple(Scene sc, HatchStyle st, MarkSettings ms, Random rng)
+    static List<List<V2>> Stipple(Scene sc, MarkSettings ms, Random rng, double toneScale)
     {
         var dots = new List<List<V2>>();
         double cell = ms.DotMin * 0.7;
         var grid = new Dictionary<long, List<V2>>(LongKey.Comparer);
         Func<long, long, long> key = (x, y) => unchecked((x * 73856093L) ^ (y * 19349663L));
         double w = sc.W / sc.Res, h = sc.H / sc.Res;
-        int tries = (int)(w * h / (ms.DotMin * ms.DotMin) * 3);
+        int tries = (int)(w * h / (ms.DotMin * ms.DotMin) * 2.5);
         for (int t = 0; t < tries; t++)
         {
             var q = new V2(rng.NextDouble() * w, rng.NextDouble() * h);
             int si; Vec3 pos, n;
             if (!sc.Query(q, out si, out pos, out n)) continue;
+            if (sc.TwoSided && Vec3.Dot(n, sc.F) > 0) n = n * -1;
             double tone = sc.Lit != null ? 1 - sc.Lit(si, q, pos, n) : 1 - Math.Max(0, Vec3.Dot(n, sc.Light));
-            tone = Math.Max(0, (tone - 0.1) / 0.9);
-            if (tone < 0.03) continue;
-            double r = Math.Min(ms.DotMax, ms.DotMin / Math.Pow(tone, 0.75));
+            if (sc.Lit == null) tone = Math.Min(1, tone + 0.25 * Math.Pow(1 - Math.Abs(Vec3.Dot(n, sc.F)), 2));
+            tone = Math.Max(0, (tone * toneScale - 0.08) / 0.92);
+            if (tone < 0.02) continue;
+            double r = Math.Min(ms.DotMax, ms.DotMin / Math.Pow(tone, ms.DotGamma));
             r *= 1 + 0.22 * Noise(q.X / 9, q.Y / 9, 3) + 0.08 * Noise(q.X / 2.2, q.Y / 2.2, 5);
             if (r >= ms.DotMax) continue;
             long cx = (long)Math.Floor(q.X / cell), cy = (long)Math.Floor(q.Y / cell);
@@ -113,6 +147,61 @@ public static partial class Edition
             dots.Add(new List<V2> { q - d, q + d });
         }
         return dots;
+    }
+
+    // ---------- ink drift ----------
+    // Strokes pushed by a slow swirling flow (angle from a large-scale noise), weak at the cluster centre and
+    // up to ms.Drift mm at its edge; each stroke also slides further the longer it runs (the pen dragging ink),
+    // and dark strokes get a second, slightly offset pass, as if the ink pooled there.
+    static List<List<V2>> InkDrift(List<List<V2>> strokes, Scene sc, MarkSettings ms, Random rng, bool pool, double scale = 1)
+    {
+        double sx = 0, sy = 0; int cnt = 0;
+        for (int y = 0; y < sc.H; y += 4)
+            for (int x = 0; x < sc.W; x += 4)
+            {
+                var q = new V2((x + 0.5) / sc.Res, (y + 0.5) / sc.Res);
+                if (sc.Covered(q)) { sx += q.X; sy += q.Y; cnt++; }
+            }
+        var c = new V2(sx / Math.Max(1, cnt), sy / Math.Max(1, cnt));
+        double R = Math.Sqrt(cnt * 16 / (sc.Res * sc.Res) / Math.PI);
+        Func<V2, V2> flow = q =>
+        {
+            double ang = Math.PI * 2 * Noise(q.X / 35, q.Y / 35, 11) + 0.6 * Noise(q.X / 9, q.Y / 9, 13);
+            double r = (q - c).Length / Math.Max(R, 1e-6);
+            double mag = scale * ms.Drift * Math.Min(1.6, r * r) * (0.65 + 0.35 * Noise(q.X / 14, q.Y / 14, 17));
+            return new V2(Math.Cos(ang), Math.Sin(ang)) * mag;
+        };
+        var res = new List<List<V2>>(strokes.Count);
+        foreach (var l in strokes)
+        {
+            var pts = Densify(l, 0.3).ToList();
+            if (pts.Count < 2) { res.Add(l); continue; }
+            double along = 0, slide = 0.012 * scale * (0.5 + rng.NextDouble());
+            var o = new List<V2>(pts.Count);
+            for (int i = 0; i < pts.Count; i++)
+            {
+                if (i > 0) along += (pts[i] - pts[i - 1]).Length;
+                o.Add(pts[i] + flow(pts[i]) * (1 + slide * along));
+            }
+            res.Add(Hatcher.Simplify(o, 0.015));
+            if (!pool) continue;
+            var mid = pts[pts.Count / 2];
+            int si; Vec3 pos, n;
+            if (!sc.Query(mid, out si, out pos, out n)) continue;
+            double tone = sc.Lit != null ? 1 - sc.Lit(si, mid, pos, n) : 1 - Math.Max(0, Vec3.Dot(n, sc.Light));
+            if (tone < 0.62 || rng.NextDouble() > (tone - 0.62) * 2.2) continue;
+            // The pooled second pass: ~0.18 mm sideways, a little shorter at both ends.
+            var dbl = new List<V2>();
+            int i0 = (int)(pts.Count * 0.15 * rng.NextDouble()), i1 = pts.Count - 1 - (int)(pts.Count * 0.2 * rng.NextDouble());
+            for (int i = i0; i <= i1; i++)
+            {
+                int j = Math.Min(pts.Count - 1, i + 1), k = Math.Max(0, i - 1);
+                var dir = (pts[j] - pts[k]).Normalized();
+                dbl.Add(o[i] + new V2(-dir.Y, dir.X) * 0.18);
+            }
+            if (dbl.Count >= 2) res.Add(Hatcher.Simplify(dbl, 0.015));
+        }
+        return res;
     }
 
     // ---------- hand noise ----------
@@ -153,25 +242,7 @@ public static partial class Edition
         return res;
     }
 
-    // Smooth 2D value noise in [-1, 1] (hashed lattice, smoothstep interpolation).
-    static double Noise(double x, double y, int seed)
-    {
-        int x0 = (int)Math.Floor(x), y0 = (int)Math.Floor(y);
-        double fx = x - x0, fy = y - y0;
-        fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
-        Func<int, int, double> h = (a, b) =>
-        {
-            unchecked
-            {
-                uint u = (uint)(a * 374761393 + b * 668265263 + seed * 1442695041);
-                u = (u ^ (u >> 13)) * 1274126177; u ^= u >> 16;
-                return (u & 0xffffff) / (double)0xffffff * 2 - 1;
-            }
-        };
-        double a0 = h(x0, y0) + (h(x0 + 1, y0) - h(x0, y0)) * fx;
-        double a1 = h(x0, y0 + 1) + (h(x0 + 1, y0 + 1) - h(x0, y0 + 1)) * fx;
-        return a0 + (a1 - a0) * fy;
-    }
+    static double Noise(double x, double y, int seed) { return Hatcher.Noise2(x, y, seed); }
 
     static HatchStyle Clone(HatchStyle s) { return (HatchStyle)s.GetType().GetMethod("MemberwiseClone", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(s, null); }
     static EditionSettings Clone(EditionSettings s) { return (EditionSettings)s.GetType().GetMethod("MemberwiseClone", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(s, null); }

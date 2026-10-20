@@ -111,6 +111,11 @@ overview per kind to `editions/marks_<seed>/` (Marks.cs):
 - `natural`: house style + hand noise: sideways wander 0.12 mm (two noise octaves, 3.5 mm wavelength), small breaks (0.04/mm).
 - `glass`: interior walls (`Scene.Surface(m, -1)`, two-sided shading, facet rings) on layer `inner`, the internal border network
   on `innerborders`, the skin at 0.6 tone on top. Plot `inner` + `innerborders` with a finer or lighter pen.
+Round 2 (quad sheet, `marks --seed N --quad [--marks a,b,c,d]`): four kinds as A5 quadrants on one A3 page, for side-by-side
+plots. Default quad: glass-stipple | cross | inkdrift | wild. Stipple spacing is now DotMin 0.30 / tone^1.6 (steep: solid darks,
+sparse lights). `cross` adds per-film angle jitter (6/16/22 deg per pass), +-30% spacing noise and seed-drawn pass angles. `inkdrift`
+pushes strokes along a swirling noise flow (up to 2.2 mm at the cluster edge, growing along each stroke), with pooled double
+passes in the darks. `wild` is natural at 0.5 mm wobble. Also RotateJitter, SepJitter, JitterSeed.
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
 ## Output: `editions/<seed>/` (git-ignored)

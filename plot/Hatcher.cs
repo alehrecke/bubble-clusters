@@ -39,6 +39,11 @@ public class HatchStyle
     public double RotateDeg = 0;
     public double ToneFrom = 0;
     public double ToneScale = 1;
+    // Randomness for the crossing passes: each film's direction turned by up to +-RotateJitter degrees (fixed per
+    // film and JitterSeed), and the spacing wandering by +-SepJitter (fraction) with a smooth noise over the sheet.
+    public double RotateJitter = 0;
+    public double SepJitter = 0;
+    public int JitterSeed = 1;
     public double HyperMin = 0.33;
     public double HyperMax = 6.0;
 }
@@ -102,9 +107,11 @@ public static class Hatcher
             double dx = Vec3.Dot(t, sc.R), dy = -Vec3.Dot(t, sc.U);
             double dl = Math.Sqrt(dx * dx + dy * dy);
             if (dl < 1e-6) { dx = 1; dy = 0; dl = 1; }
-            if (st.RotateDeg != 0)
+            double rot = st.RotateDeg;
+            if (st.RotateJitter > 0) rot += st.RotateJitter * Hash(sc.FaceIdx[s], st.JitterSeed);
+            if (rot != 0)
             {
-                double c = Math.Cos(st.RotateDeg * Math.PI / 180), sn = Math.Sin(st.RotateDeg * Math.PI / 180);
+                double c = Math.Cos(rot * Math.PI / 180), sn = Math.Sin(rot * Math.PI / 180);
                 double rx = dx * c - dy * sn, ry = dx * sn + dy * c; dx = rx; dy = ry;
             }
             if (st.ToneScale != 1 || st.ToneFrom > 0)
@@ -112,13 +119,18 @@ public static class Hatcher
             return new[] { tone, dx / dl, dy / dl, s, (double)sc.FaceIdx[s], ok };
         };
         double sepMax = st.Hyper ? st.HyperMax : st.SepMax;
-        Func<double, double> sepOf = tone =>
+        Func<double, double> sepOf0 = tone =>
         {
             if (st.Hyper) return Math.Min(st.HyperMax * 1.5, st.HyperMin / (Math.Max(0, tone) + 0.001));
             double d = Math.Max(0, Math.Min(1, (tone - st.Highlight) / (1 - st.Highlight)));
             d = Math.Pow(d, st.Gamma);
             return st.SepMax + (st.SepMin - st.SepMax) * d;
         };
+        // Spacing noise needs the sheet position: sepAt(tone, p).
+        V2 sepPos = new V2(0, 0);
+        Func<double, double> sepOf = tone => st.SepJitter > 0
+            ? sepOf0(tone) * (1 + st.SepJitter * Noise2(sepPos.X / 7, sepPos.Y / 7, st.JitterSeed))
+            : sepOf0(tone);
         Func<V2, double, bool> free = (p, dist) =>
         {
             long cx = (long)Math.Floor(p.X / cell), cy = (long)Math.Floor(p.Y / cell);
@@ -191,6 +203,7 @@ public static class Hatcher
                 if (b == null || b[4] != faceId) break;
                 var d2 = new V2(b[1], b[2]); if (d2.X * d.X + d2.Y * d.Y < 0) d2 = d2 * -1;
                 var next = p + d2 * st.Step;
+                sepPos = p;
                 double sep = sepOf(a[0]);
                 double fr = (st.Mixed ? 0.95 : 0.5) * sep;
                 if (sep > sepMax * 1.01 || !free(next, fr)) break;   // highlight, or too close to another stroke
@@ -219,6 +232,7 @@ public static class Hatcher
             var q = seeds.Dequeue();
             var a = sample(q);
             if (a == null || a[5] < 0.5) continue;
+            sepPos = q;
             double sep = sepOf(a[0]);
             if (sep > sepMax * 1.01) continue;
             if (!free(q, sep)) continue;
@@ -252,6 +266,29 @@ public static class Hatcher
             }
         }
         return strokes.Select(l => Simplify(l, 0.015)).ToList();
+    }
+
+    // Fixed pseudo-random value in [-1, 1] per (index, seed).
+    public static double Hash(int i, int seed)
+    {
+        unchecked
+        {
+            uint u = (uint)(i * 374761393 + seed * 668265263 + 1013904223);
+            u = (u ^ (u >> 13)) * 1274126177; u ^= u >> 16;
+            return (u & 0xffffff) / (double)0xffffff * 2 - 1;
+        }
+    }
+
+    // Smooth 2D value noise in [-1, 1].
+    public static double Noise2(double x, double y, int seed)
+    {
+        int x0 = (int)Math.Floor(x), y0 = (int)Math.Floor(y);
+        double fx = x - x0, fy = y - y0;
+        fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+        Func<int, int, double> h = (a, b) => Hash(unchecked(a * 92821 + b), seed);
+        double a0 = h(x0, y0) + (h(x0 + 1, y0) - h(x0, y0)) * fx;
+        double a1 = h(x0, y0 + 1) + (h(x0 + 1, y0 + 1) - h(x0, y0 + 1)) * fx;
+        return a0 + (a1 - a0) * fy;
     }
 
     // 3D polylines → visible 2D runs (hidden parts removed by the scene's depth buffer).
