@@ -36,7 +36,7 @@ public class MarkSettings
     {
         { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
         { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
-        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "lattice", "Lattice" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "lattice", "Lattice" },
     };
 
     public static string Resolve(string kindOrName)

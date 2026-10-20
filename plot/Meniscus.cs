@@ -98,6 +98,26 @@ public static partial class Edition
                 else fine.AddRange(one);
             }
         }
+        else if (variant == "windows")
+        {
+            // The footprints are transparent: looking up through each one we see the inside of that bubble, its
+            // ceiling (the walls it shares with the bubbles above and beside it). The nearest film from below at
+            // every point is that ceiling, so one scene of all films, nearest-first, gives every window its own
+            // room. Stippled: walls seen edge-on at the window rims dark, the ceiling straight overhead light.
+            // The rooms' visible facet edges drawn as fine lines.
+            var all = Frame(s, v, -2, fr, p, classic, Clone(baseSt), fit);
+            var wMs = new MarkSettings { DotMin = 0.34, DotMax = 4.5, DotGamma = 1.6 };
+            fine.AddRange(Stipple(all, wMs, rng, 0.95, q => 0.75 + 0.25 * F(q)));
+            var edges = new List<List<Vec3>>();
+            foreach (var bd in borders)
+            {
+                if (bd.OnHost) continue;
+                var pts = new List<Vec3>(bd.Points);
+                if (bd.Closed && pts.Count > 0) pts.Add(pts[0]);
+                edges.Add(pts);
+            }
+            foreach (var run in Hatcher.VisibleRuns(all, edges, 4 / (all.S * all.Res))) fine.Add(Smooth2(run));
+        }
         else if (variant == "depth-hatch")
         {
             // Walls hatched along their surfaces; strokes thin out and drop away with height.

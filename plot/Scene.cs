@@ -39,7 +39,14 @@ public class Scene
             if (FoamMesh.IsSolid(t)) continue;
             int own;
             bool flip;
-            if (bubble < 0)
+            if (bubble == -2)
+            {
+                // Every film (interior walls and outer skin), two-sided: the foam bed "windows" view.
+                if (t.Neg > 0) { own = t.Neg; flip = false; }
+                else if (t.Pos > 0) { own = t.Pos; flip = true; }
+                else continue;
+            }
+            else if (bubble < 0)
             {
                 if (t.Neg > 0 && t.Pos > 0) { own = t.Neg; flip = false; }
                 else continue;

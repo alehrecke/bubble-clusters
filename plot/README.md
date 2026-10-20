@@ -143,6 +143,9 @@ Full sheet with a 10 mm paper margin. The solved foam is saved (`bed.obj` + `win
 - One-pen variants of meniscus (layers deep + front, same pen): `wet-lattice` (every border a wet ribbon, width shrinking with
   height; ~42 min), `deep-stipple` (crisp borders + wall stipple weighted (1-height)^1.4: densest near the plane; ~2 h),
   `depth-hatch` (walls hatched, strokes kept with probability (1-height)^1.3; ~95 min, busy).
+- `windows` (one pen): the footprints are transparent, so each opening looks up into its own bubble: one scene of ALL films
+  (`Scene.Surface(m, -2)`, two-sided), nearest-from-below = each room's ceiling, stippled (edge-on walls at the rims dark, the
+  ceiling overhead light), the rooms' visible facet edges as fine lines, the meniscus plane on top. Seed 3301: ~92k strokes, ~7 h.
 Seed 3301 took ~50 min to solve (234k triangles); settle ended with 7 pinched borders (not fully clean, not visible in the drawings).
 
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
