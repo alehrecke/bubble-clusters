@@ -126,6 +126,12 @@ patches, no cast shadow). glass-dots (stippled with line borders) still availabl
 Sand = stipple, Engrave = cross, Hand = natural, Tremor = wild, Tremor Sky = wild-bg, Drift = inkdrift, Lens = glass,
 Ghost = glass-stipple, Frost = glass-dots, Mist = glass-pure. `--round r4` adds a round tag to the label.
 
+## Gallery (`gallery`, 2026-10-20)
+
+`bubbleplot gallery --start N [--n 16] [--marks glass-pure]`: N.. N+n-1 new clusters, one per A3 quadrant, 4 per page, in one mark
+style. Per seed: count 8..40 (log-uniform), RMin 0.18..0.40, RMax 2.5..7.5 x RMin, skew 1.0..3.4. Clusters settled, OBJs + clusters.txt
+saved. Seeds 7001-7016 in Mist: ~70-80k strokes (~5.5 h) per page.
+
 ## Foam bed (`bed`, 2026-10-19)
 
 `bubbleplot bed --seed N [--count 120] [--layers 3] [--bed mist,lattice] [--reuse]` -> `editions/bed_<seed>/`. The A3 sheet is the plane

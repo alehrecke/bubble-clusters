@@ -97,6 +97,50 @@ public static class Program
             return 0;
         }
 
+        if (cmd == "gallery")
+        {
+            // Many different clusters in one mark style, one per A3 quadrant (Alex, 2026-10-20: "a range of different
+            // clusters with a variety of cells and sizes"). Per seed: bubble count 8..40 (log-uniform), radius range and
+            // size skew drawn from the seed, so the set runs from a few big cells to dense mixed foams.
+            //   gallery --start N [--n 16] [--marks glass-pure]
+            int start = int.Parse(opt("start", "7001")), nRuns = int.Parse(opt("n", "16"));
+            string kind = MarkSettings.Resolve(opt("marks", "glass-pure"));
+            string gdir = Path.Combine(root, "gallery_" + kind + "_" + start + "-" + (start + nRuns - 1));
+            Directory.CreateDirectory(gdir);
+            var tiles = new List<Plot>();
+            var specs = new List<string>();
+            for (int i = 0; i < nRuns; i++)
+            {
+                int seed = start + i;
+                var prng = new Random(seed * 101 + 13);
+                var ge = settings(seed);
+                ge.Count = (int)Math.Round(Math.Exp(Math.Log(8) + prng.NextDouble() * (Math.Log(40) - Math.Log(8))));
+                ge.RMin = 0.18 + 0.22 * prng.NextDouble();
+                ge.RMax = ge.RMin * (2.5 + 5 * prng.NextDouble());
+                ge.SizeSkew = 1.0 + 2.4 * prng.NextDouble();
+                ge.TriangleBudget = ge.Count > 25 ? 120000 : 90000;
+                var gs = Edition.Generate(ge, gdir, log);
+                File.WriteAllText(Path.Combine(gdir, "cluster_" + seed + ".obj"), FoamAnalysis.ToObj(gs.Mesh));
+                ge.SheetW = A3W / 2; ge.SheetH = A3H / 2;
+                var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
+                var ms = new MarkSettings { Kind = kind, Tag = ge.Count + " CELLS" + (ge.Variant > 0 ? "  V" + ge.Variant : "") };
+                tiles.Add(Edition.MarkOverview(gs, Edition.MakeView(seed), hs, ge, ms));
+                specs.Add(string.Format(CI, "{0}: {1} bubbles, r {2:F2}..{3:F2}, skew {4:F1}, variant {5}", seed, ge.Count, ge.RMin, ge.RMax, ge.SizeSkew, ge.Variant));
+                log("gallery " + (i + 1) + "/" + nRuns + ": " + specs[specs.Count - 1]);
+            }
+            var pe = settings(start); pe.SheetW = A3W; pe.SheetH = A3H;
+            for (int pg = 0; pg * 4 < tiles.Count; pg++)
+            {
+                var page = Edition.Tile(tiles.Skip(pg * 4).Take(4).ToList(), A3W, A3H, 2, 2);
+                string pname = string.Format(CI, "a3_gallery_{0}_p{1:00}_seeds{2}-{3}", kind, pg + 1, start + pg * 4, Math.Min(start + pg * 4 + 3, start + nRuns - 1));
+                var pi = Edition.Write(page, gdir, pname, "Bubble clusters (" + MarkSettings.NameOf(kind) + "), page " + (pg + 1), pe);
+                log("page " + (pg + 1) + ": " + pi["strokes"] + " strokes, ~" + pi["estMinutes"] + " min");
+            }
+            File.WriteAllLines(Path.Combine(gdir, "clusters.txt"), specs);
+            log("done: " + gdir);
+            return 0;
+        }
+
         var e = settings(int.Parse(opt("seed", "1")));
         if (cmd == "bed")
         {
