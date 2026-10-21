@@ -23,7 +23,7 @@ public class BeadSettings
 
 public static partial class Edition
 {
-    static bool IsBeads(string kind) { return kind.StartsWith("mist-beads") || kind.StartsWith("wire-beads") || kind.StartsWith("mist-soap") || kind.StartsWith("mist-dew"); }
+    static bool IsBeads(string kind) { return kind.StartsWith("mist-beads") || kind.StartsWith("wire-beads") || kind.StartsWith("mist-soap") || kind.StartsWith("mist-dew") || kind == "mist-refl"; }
 
     static Plot BeadOverview(FoamSolver s, View v, HatchStyle baseSt, EditionSettings e, MarkSettings ms)
     {
@@ -48,7 +48,7 @@ public static partial class Edition
         // instead of curves"): beads may overlap and merge; each point belongs to the bead with the lowest power
         // (|q - c|^2 - r^2), so two merged beads share a straight wall on their radical line, and the outside of a
         // clump is the union of the circles. Drawn as dots (soap-film stipple) or as lines (-lines).
-        if (ms.Kind.StartsWith("mist-dew")) return DewOverview(s, v, p, sc, dense, new Random(v.Seed * 7 + 17));
+        if (ms.Kind.StartsWith("mist-dew") || ms.Kind == "mist-refl") return DewOverview(s, v, p, sc, dense, new Random(v.Seed * 7 + 17), ms.Kind);
         bool soap = ms.Kind.StartsWith("mist-soap"), soapLines = ms.Kind.EndsWith("-lines");
         if (soap) bs = new BeadSettings { NodeRadius = dense ? 0.2 : 0.16, Decay = dense ? 0.38 : 0.3, BorderChance = 0.95, NodeClump = dense ? 14 : 10, Overlap = 0.6 };
         List<KeyValuePair<V2, double>> discs;

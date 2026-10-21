@@ -14,8 +14,14 @@ using System.Linq;
 // The Mist stipple is cleared only where a bead surface is actually in front.
 public static partial class Edition
 {
-    static Plot DewOverview(FoamSolver s, View v, Plot p, Scene sc, bool dense, Random rng)
+    // Reflections (Reflect.cs, 2026-10-21): -refl = window + dark floor on the beads; -refl-body = also windows on
+    // the bubbles; -refl-full = also the dark floor on the bubbles; mist-refl = the bubbles' reflections, no beads.
+    static Plot DewOverview(FoamSolver s, View v, Plot p, Scene sc, bool dense, Random rng, string kind = "mist-dew")
     {
+        bool beadsOn = kind != "mist-refl", beadRefl = kind.Contains("-refl") || kind == "mist-refl";
+        bool bodyWin = kind.EndsWith("-refl-body") || kind.EndsWith("-refl-full") || kind == "mist-refl";
+        bool bodyFloor = kind.EndsWith("-refl-full") || kind == "mist-refl";
+        var env = new Env(sc);
         var bs = new BeadSettings { NodeRadius = dense ? 0.2 : 0.15, Decay = dense ? 0.36 : 0.28, BorderChance = 0.95, NodeClump = dense ? 12 : 8, Overlap = 0.8 };
         List<KeyValuePair<V2, double>> discs; List<KeyValuePair<Vec3, double>> placed;
         Beads(s, sc, bs, rng, true, out discs, out placed);
@@ -31,6 +37,7 @@ public static partial class Edition
                 c = pos - n * (0.32 * b.Value);
             beads.Add(new KeyValuePair<Vec3, double>(c, b.Value));
         }
+        if (!beadsOn) beads.Clear();
         var proj = beads.Select(b => sc.Project(b.Key)).ToList();
         Func<V2, Tuple<int, double, Vec3>> frontRef = null;
         var rad = beads.Select(b => b.Value * sc.S).ToList();
@@ -117,9 +124,16 @@ public static partial class Edition
                 var n = f.Item3;
                 double lam = Math.Max(0, Vec3.Dot(n, light));
                 double spec = Math.Pow(Math.Max(0, Vec3.Dot(n, half)), 30);
-                if (spec > 0.35) continue;                                 // glare: clean paper
+                double dark = 0;
+                if (beadRefl)
+                {
+                    var rv = env.Reflect(n);
+                    if (env.Window(rv) < 1) continue;                      // the window: clean paper
+                    dark = env.Dark(rv);                                   // the floor: darker
+                }
+                else if (spec > 0.35) continue;                            // glare: clean paper
                 double rim = Math.Pow(1 - Math.Abs(Vec3.Dot(n, sc.F)), 3);
-                tone = Math.Min(1, 0.85 * (1 - lam) + 0.45 * rim);
+                tone = Math.Min(1, 0.85 * (1 - lam) + 0.45 * rim + 0.45 * dark);
                 tone = Math.Max(0, (tone - 0.12) / 0.88);
             }
             else
@@ -161,6 +175,13 @@ public static partial class Edition
         {
             // Round 2: tiny glints (the round-1 rings read as little letter Cs); the reflection arc only on big beads.
             double R = rad[i];
+            if (beadRefl)
+            {
+                if (R < 0.3 || !shows[i]) continue;
+                foreach (var mark in BeadReflectionMarks(sc, env, proj[i], R))
+                    glare.AddRange(Runs(mark.Count, k => front(mark[k]).Item1 == i, k => mark[k]));
+                continue;
+            }
             if (R < 0.45 || !shows[i]) continue;
             var hp = proj[i] + new V2(Vec3.Dot(half, sc.R), -Vec3.Dot(half, sc.U)) * (0.92 * R);
             double hr = Math.Max(0.08, 0.09 * R);
@@ -178,6 +199,7 @@ public static partial class Edition
                 glare.AddRange(Runs(mark.Count, k => front(mark[k]).Item1 == i, k => mark[k]));
         }
         p.Layer("beads").AddRange(glare);
+        if (bodyWin) BodyReflections(p, sc, env, bodyFloor, rng, q => front(q).Item1 >= 0);
         return p;
     }
 }
