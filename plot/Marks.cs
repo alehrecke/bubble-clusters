@@ -36,7 +36,7 @@ public class MarkSettings
     {
         { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
         { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
-        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
     };
 
     public static string Resolve(string kindOrName)
@@ -66,6 +66,7 @@ public static partial class Edition
 
     static Plot MarkOverviewRaw(FoamSolver s, View v, HatchStyle baseSt, EditionSettings e, MarkSettings ms)
     {
+        if (IsBeads(ms.Kind)) return BeadOverview(s, v, baseSt, e, ms);
         var p = NewPlot(e);
         var rng = new Random(v.Seed * 7 + 1);
         double wob = ms.Wobble >= 0 ? ms.Wobble

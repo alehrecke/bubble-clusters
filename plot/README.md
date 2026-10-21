@@ -160,6 +160,10 @@ Seed 3301 took ~50 min to solve (234k triangles); settle ended with 7 pinched bo
 More styles (More.cs, 2026-10-20; most need few pen lifts): Contour = contour (skin sliced by horizontal planes, nested
 families by tone), Thread = thread (stipple points walked nearest-neighbour into long lines), Froth = froth (circles packed by tone),
 Wave = wave (parallel lines rippling with tone, nested families). `marks --obj <cluster.obj>` reuses a saved cluster.
+Beads (Beads.cs, 2026-10-20): satellite bubbles placed in 3D along the cleaned Plateau borders as a post-process (not simulated):
+clumped at the nodes, shrinking along each border, packed without overlap; drawn as outline circles, nearer beads hiding farther ones,
+whole-bead visibility against the surface, a highlight gap toward the light, and the stipple cleared under each bead. Beaded Mist =
+mist-beads / mist-beads-dense, Beaded Wire = wire-beads / wire-beads-dense (front border network only).
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
 ## Output: `editions/<seed>/` (git-ignored)
