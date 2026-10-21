@@ -157,6 +157,9 @@ Full sheet with a 10 mm paper margin. The solved foam is saved (`bed.obj` + `win
   sparse dots / hidden. Seed 3301: ~115k strokes, ~8.5 h.
 Seed 3301 took ~50 min to solve (234k triangles); settle ended with 7 pinched borders (not fully clean, not visible in the drawings).
 
+More styles (More.cs, 2026-10-20; most need few pen lifts): Contour = contour (skin sliced by horizontal planes, nested
+families by tone), Thread = thread (stipple points walked nearest-neighbour into long lines), Froth = froth (circles packed by tone),
+Wave = wave (parallel lines rippling with tone, nested families). `marks --obj <cluster.obj>` reuses a saved cluster.
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
 ## Output: `editions/<seed>/` (git-ignored)

@@ -105,7 +105,9 @@ public static class Program
             //   gallery --start N [--n 16] [--marks glass-pure]
             int start = int.Parse(opt("start", "7001")), nRuns = int.Parse(opt("n", "16"));
             string kind = MarkSettings.Resolve(opt("marks", "glass-pure"));
-            string gdir = Path.Combine(root, "gallery_" + kind + "_" + start + "-" + (start + nRuns - 1));
+            // --shapes chain,ring,raft,branch,buds,ball: cycled through the runs (Shapes.cs); default all round balls.
+            var shapes = opt("shapes", "ball").Split(',').Select(x => x.Trim().ToLowerInvariant()).ToArray();
+            string gdir = Path.Combine(root, "gallery_" + kind + (shapes.Length > 1 || shapes[0] != "ball" ? "_shapes" : "") + "_" + start + "-" + (start + nRuns - 1));
             Directory.CreateDirectory(gdir);
             var tiles = new List<Plot>();
             var specs = new List<string>();
@@ -118,14 +120,17 @@ public static class Program
                 ge.RMin = 0.18 + 0.22 * prng.NextDouble();
                 ge.RMax = ge.RMin * (2.5 + 5 * prng.NextDouble());
                 ge.SizeSkew = 1.0 + 2.4 * prng.NextDouble();
+                ge.Shape = shapes[i % shapes.Length];
+                if (ge.Shape == "chain" || ge.Shape == "ring" || ge.Shape == "branch") ge.Count = Math.Max(ge.Count, 16);
+                if (ge.Shape == "raft" || ge.Shape == "buds") ge.Count = Math.Max(ge.Count, 12);
                 ge.TriangleBudget = ge.Count > 25 ? 120000 : 90000;
                 var gs = Edition.Generate(ge, gdir, log);
                 File.WriteAllText(Path.Combine(gdir, "cluster_" + seed + ".obj"), FoamAnalysis.ToObj(gs.Mesh));
                 ge.SheetW = A3W / 2; ge.SheetH = A3H / 2;
                 var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
-                var ms = new MarkSettings { Kind = kind, Tag = ge.Count + " CELLS" + (ge.Variant > 0 ? "  V" + ge.Variant : "") };
+                var ms = new MarkSettings { Kind = kind, Tag = (ge.Shape != "ball" ? ge.Shape.ToUpperInvariant() + "  " : "") + ge.Count + " CELLS" + (ge.Variant > 0 ? "  V" + ge.Variant : "") };
                 tiles.Add(Edition.MarkOverview(gs, Edition.MakeView(seed), hs, ge, ms));
-                specs.Add(string.Format(CI, "{0}: {1} bubbles, r {2:F2}..{3:F2}, skew {4:F1}, variant {5}", seed, ge.Count, ge.RMin, ge.RMax, ge.SizeSkew, ge.Variant));
+                specs.Add(string.Format(CI, "{0}: " + ge.Shape + ", {1} bubbles, r {2:F2}..{3:F2}, skew {4:F1}, variant {5}", seed, ge.Count, ge.RMin, ge.RMax, ge.SizeSkew, ge.Variant));
                 log("gallery " + (i + 1) + "/" + nRuns + ": " + specs[specs.Count - 1]);
             }
             var pe = settings(start); pe.SheetW = A3W; pe.SheetH = A3H;
@@ -189,6 +194,13 @@ public static class Program
             featured = MostFacedInterior(s.Mesh);
             log("loaded " + objPath + ": " + s.Mesh.BubbleCount + " bubbles, " + s.Mesh.T.Count + " triangles; featured bubble " + featured);
             cmd = "preview";
+        }
+        else if (opt("obj", null) != null)
+        {
+            // --obj <foam.obj>: use a saved, settled cluster (e.g. a gallery cluster) instead of generating one.
+            string op = Path.GetFullPath(opt("obj", null));
+            s = new FoamSolver(FoamAnalysis.FromObj(File.ReadAllText(op)), new SolverSettings());
+            log("loaded " + op + ": " + s.Mesh.BubbleCount + " bubbles");
         }
         else
         {

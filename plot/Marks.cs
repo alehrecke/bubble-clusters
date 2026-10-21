@@ -36,7 +36,7 @@ public class MarkSettings
     {
         { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
         { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
-        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
     };
 
     public static string Resolve(string kindOrName)
@@ -122,7 +122,9 @@ public static partial class Edition
         }
 
         var sc = Frame(s, v, 0, OverviewFrame, p, e, baseSt);
-        if (ms.Kind == "stipple")
+        if (IsMore(ms.Kind))
+            p.Layer("hatch").AddRange(MoreMarks(ms.Kind, s, sc, rng));
+        else if (ms.Kind == "stipple")
             p.Layer("hatch").AddRange(Stipple(sc, ms, rng, 1));
         else if (ms.Kind == "inkdrift")
         {

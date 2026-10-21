@@ -18,6 +18,7 @@ public class EditionSettings
     // Radii: RMin..RMax, skewed toward small by SizeSkew (>1 = more small bubbles, a few big ones).
     // (Before 2026-10-18 evening: 9..15 bubbles, 0.5..1.6, skew 1.6, 60k triangles; old seeds look different now.)
     public double RMin = 0.3, RMax = 1.9, SizeSkew = 2.2;
+    public string Shape = "ball";      // cluster silhouette: ball | chain | ring | raft | branch | buds (Shapes.cs)
     public int TriangleBudget = 90000;
     public bool PlotterCopy = true;    // also write *_plotter-landscape.svg for portrait sheets
     public int DetailBatches = 0;      // Border Detail batches after relaxing (0 = none)
@@ -64,14 +65,18 @@ public static partial class Edition
         int n = e.Count > 0 ? e.Count : rng.Next(16, 27);
         var r = new List<double>(); var c = new List<Vec3>();
         for (int i = 0; i < n; i++) r.Add(e.RMin + (e.RMax - e.RMin) * Math.Pow(rng.NextDouble(), e.SizeSkew));
-        double R0 = 0.9 * Math.Pow(n, 1.0 / 3) * r.Average();
-        for (int i = 0; i < n; i++)
+        if (e.Shape != "ball") ShapePack(e.Shape, c, r, rng);
+        else
         {
-            Vec3 p;
-            do p = new Vec3(rng.NextDouble() * 2 - 1, rng.NextDouble() * 2 - 1, rng.NextDouble() * 2 - 1); while (p.LengthSq > 1);
-            c.Add(p * R0);
+            double R0 = 0.9 * Math.Pow(n, 1.0 / 3) * r.Average();
+            for (int i = 0; i < n; i++)
+            {
+                Vec3 p;
+                do p = new Vec3(rng.NextDouble() * 2 - 1, rng.NextDouble() * 2 - 1, rng.NextDouble() * 2 - 1); while (p.LengthSq > 1);
+                c.Add(p * R0);
+            }
+            ClusterPacker.Pack(c, r, 1000, 0.01);
         }
-        ClusterPacker.Pack(c, r, 1000, 0.01);
         // Cell size: about a fifth of the smallest radius, coarser if the mesh would get too big.
         double area = r.Sum(x => 4 * Math.PI * x * x);
         double h = Math.Max(r.Min() / 5, Math.Sqrt(area / (0.433 * e.TriangleBudget)));
