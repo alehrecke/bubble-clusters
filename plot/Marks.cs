@@ -36,7 +36,7 @@ public class MarkSettings
     {
         { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
         { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
-        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-soap", "Soap Mist" }, { "mist-soap-dense", "Soap Mist Dense" }, { "mist-soap-lines", "Soap Mist Lines" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-soap", "Soap Mist" }, { "mist-dew", "Dew" }, { "mist-dew-dense", "Dew Dense" }, { "mist-soap-dense", "Soap Mist Dense" }, { "mist-soap-lines", "Soap Mist Lines" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
     };
 
     public static string Resolve(string kindOrName)

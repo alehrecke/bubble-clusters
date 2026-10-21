@@ -164,6 +164,9 @@ Beads (Beads.cs, 2026-10-20): satellite bubbles placed in 3D along the cleaned P
 clumped at the nodes, shrinking along each border, packed without overlap; drawn as outline circles, nearer beads hiding farther ones,
 whole-bead visibility against the surface, a highlight gap toward the light, and the stipple cleared under each bead. Beaded Mist =
 mist-beads / mist-beads-dense, Beaded Wire = wire-beads / wire-beads-dense (front border network only).
+Dew (Dew.cs): border beads as 3D spheres sunk ~1/3 into the skin, drawn per point against the skin depth, body stippled under the
+cluster light (+ film rim), tiny crisp glints, stippled contact shadows (only from beads that show), Mist cleared only under visible
+bead surface. mist-dew / mist-dew-dense; read best at full A3 (`marks --marks mist-dew`), ~87k strokes.
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
 ## Output: `editions/<seed>/` (git-ignored)
