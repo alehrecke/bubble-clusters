@@ -137,6 +137,8 @@ public static partial class Edition
         foreach (var kv in m.EdgeTris())
         {
             if (kv.Value.Count != 3) continue;
+            // Edges touching a host (the water plane, the paper): a contact line, not a Plateau border; no 120 deg rule.
+            if (kv.Value.Any(ti => FoamMesh.IsSolid(m.T[ti]))) continue;
             int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
             Vec3 ed = (m.V[b] - m.V[a]).Normalized(), mid = (m.V[a] + m.V[b]) * 0.5;
             var dirs = new Vec3[3]; var regions = new SortedSet<int>();

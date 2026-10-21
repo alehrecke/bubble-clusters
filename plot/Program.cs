@@ -97,6 +97,46 @@ public static class Program
             return 0;
         }
 
+        if (cmd == "rafts")
+        {
+            // Bubble rafts floating on a water plane (Raft.cs), one per A3 quadrant: rafts --start N [--n 8] [--marks glass-pure]
+            int start = int.Parse(opt("start", "7201")), nRuns = int.Parse(opt("n", "8"));
+            string kind = MarkSettings.Resolve(opt("marks", "glass-pure"));
+            string rdir = Path.Combine(root, "rafts_" + kind + "_" + start + "-" + (start + nRuns - 1));
+            Directory.CreateDirectory(rdir);
+            var tiles = new List<Plot>(); var specs = new List<string>();
+            for (int i = 0; i < nRuns; i++)
+            {
+                int seed = start + i;
+                var prng = new Random(seed * 101 + 13);
+                var re = settings(seed);
+                re.Count = (int)Math.Round(Math.Exp(Math.Log(14) + prng.NextDouble() * (Math.Log(48) - Math.Log(14))));
+                re.RMin = 0.2 + 0.15 * prng.NextDouble();
+                re.RMax = re.RMin * (2.5 + 4 * prng.NextDouble());
+                re.SizeSkew = 1.2 + 2 * prng.NextDouble();
+                re.TriangleBudget = 120000;
+                var rs = Edition.GenerateRaft(re, log);
+                File.WriteAllText(Path.Combine(rdir, "raft_" + seed + ".obj"), FoamAnalysis.ToObj(rs.Mesh));
+                re.SheetW = A3W / 2; re.SheetH = A3H / 2;
+                var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
+                var ms = new MarkSettings { Kind = kind, Tag = "RAFT  " + re.Count + " CELLS" };
+                tiles.Add(Edition.RaftSheet(rs, Edition.RaftView(seed), hs, re, ms));
+                specs.Add(string.Format(CI, "{0}: raft, {1} bubbles, r {2:F2}..{3:F2}, skew {4:F1}", seed, re.Count, re.RMin, re.RMax, re.SizeSkew));
+                log("raft " + (i + 1) + "/" + nRuns + ": " + specs[specs.Count - 1]);
+            }
+            var pe = settings(start); pe.SheetW = A3W; pe.SheetH = A3H;
+            for (int pg = 0; pg * 4 < tiles.Count; pg++)
+            {
+                var page = Edition.Tile(tiles.Skip(pg * 4).Take(4).ToList(), A3W, A3H, 2, 2);
+                string pname = string.Format(CI, "a3_rafts_{0}_p{1:00}_seeds{2}-{3}", kind, pg + 1, start + pg * 4, Math.Min(start + pg * 4 + 3, start + nRuns - 1));
+                var pi = Edition.Write(page, rdir, pname, "Bubble rafts (" + MarkSettings.NameOf(kind) + "), page " + (pg + 1), pe);
+                log("page " + (pg + 1) + ": " + pi["strokes"] + " strokes, ~" + pi["estMinutes"] + " min");
+            }
+            File.WriteAllLines(Path.Combine(rdir, "rafts.txt"), specs);
+            log("done: " + rdir);
+            return 0;
+        }
+
         if (cmd == "gallery")
         {
             // Many different clusters in one mark style, one per A3 quadrant (Alex, 2026-10-20: "a range of different
