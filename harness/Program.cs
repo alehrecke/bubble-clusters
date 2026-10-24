@@ -16,6 +16,69 @@ public static class Program
     public static int Main(string[] args)
     {
         string cmd = args.Length > 0 ? args[0] : "bench";
+        if (cmd == "struts")
+        {
+            // Castability of the border wireframe as round wire of diameter d (mm): struts <mesh.obj> <d> [cell]
+            // short borders (< d: become blobs), clearance between wires that don't meet (< 0.3 mm gap: Shapeways
+            // minimum; fused below 0), and the opening left in each film (2 x centre-to-border distance - d).
+            var m = FoamAnalysis.FromObj(File.ReadAllText(args[1]));
+            double d = double.Parse(args[2], CI), cell = args.Length > 3 ? double.Parse(args[3], CI) : 0.2;
+            var bs = BorderClean.Clean(m, cell, new BorderCleanSettings { Spacing = 0.15, IncludeHost = true });
+            Func<List<Vec3>, double> len = pl => { double s = 0; for (int i = 1; i < pl.Count; i++) s += (pl[i] - pl[i - 1]).Length; return s; };
+            var lens = bs.Select(b => len(b.Points)).OrderBy(x => x).ToList();
+            var nodes = new List<Vec3>();
+            foreach (var b in bs.Where(b => !b.Closed)) { nodes.Add(b.Points[0]); nodes.Add(b.Points[b.Points.Count - 1]); }
+            // Sample points per border; gaps between different borders away from shared nodes.
+            var pts = new List<KeyValuePair<int, Vec3>>();
+            for (int k = 0; k < bs.Count; k++) foreach (var p in bs[k].Points) pts.Add(new KeyValuePair<int, Vec3>(k, p));
+            double g = Math.Max(d + 0.3, 0.5);
+            var grid = new Dictionary<long, List<int>>(LongKey.Comparer);
+            Func<Vec3, long> key = q => unchecked(((long)Math.Floor(q.X / g) * 73856093L) ^ ((long)Math.Floor(q.Y / g) * 19349663L) ^ ((long)Math.Floor(q.Z / g) * 83492791L));
+            for (int i = 0; i < pts.Count; i++) { long kk = key(pts[i].Value); List<int> l; if (!grid.TryGetValue(kk, out l)) grid[kk] = l = new List<int>(); l.Add(i); }
+            Func<Vec3, bool> nearNode = q => nodes.Any(n => (n - q).Length < 1.5 * d);
+            var worstGap = new Dictionary<long, double>();   // per border pair
+            for (int i = 0; i < pts.Count; i++)
+            {
+                var q = pts[i].Value;
+                for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
+                {
+                    List<int> l; if (!grid.TryGetValue(key(q + new Vec3(dx * g, dy * g, dz * g)), out l)) continue;
+                    foreach (int j in l)
+                    {
+                        if (pts[j].Key <= pts[i].Key) continue;
+                        double gap = (pts[j].Value - q).Length - d;
+                        if (gap >= 0.3) continue;
+                        if (nearNode(q) || nearNode(pts[j].Value)) continue;
+                        long pk = ((long)pts[i].Key << 32) | (uint)pts[j].Key;
+                        double prev; if (!worstGap.TryGetValue(pk, out prev) || gap < prev) worstGap[pk] = gap;
+                    }
+                }
+            }
+            // Openings: per film, the point on it nearest its area centroid, to its own borders.
+            var dual = FoamDual.Build(m);
+            var opens = new List<double>();
+            foreach (var e in dual.Edges)
+            {
+                int a = e.A, b2 = e.B;
+                var own = bs.Where(b => b.Bubbles.Contains(a) && b.Bubbles.Contains(b2)).ToList();
+                if (own.Count == 0) continue;
+                double md = own.SelectMany(b => b.Points).Min(p => (p - e.FilmPoint).Length);
+                opens.Add(2 * md - d);
+            }
+            opens.Sort();
+            Func<List<double>, double, double> pct = (l, f) => l.Count == 0 ? double.NaN : l[Math.Min(l.Count - 1, (int)(f * l.Count))];
+            Console.WriteLine(string.Format(CI, "wire {0} mm: {1} borders ({2} on the finger), {3} nodes", d, bs.Count, bs.Count(b => b.OnHost), nodes.Count / 2));
+            Console.WriteLine(string.Format(CI, "  border length: min {0:F2}  10% {1:F2}  median {2:F2}  max {3:F2} mm; shorter than the wire: {4}",
+                lens[0], pct(lens, 0.1), pct(lens, 0.5), lens[lens.Count - 1], lens.Count(x => x < d)));
+            Console.WriteLine(string.Format(CI, "  wire pairs closer than 0.3 mm (away from nodes): {0} (fused: {1}); worst gap {2:F2} mm",
+                worstGap.Count, worstGap.Values.Count(x => x < 0), worstGap.Count > 0 ? worstGap.Values.Min() : double.NaN));
+            Console.WriteLine(string.Format(CI, "  film openings (diameter): min {0:F2}  10% {1:F2}  median {2:F2}  max {3:F2} mm; closed (<0.3): {4} of {5}",
+                opens[0], pct(opens, 0.1), pct(opens, 0.5), opens[opens.Count - 1], opens.Count(x => x < 0.3), opens.Count));
+            var bb = m.V.Aggregate(new[] { double.MaxValue, double.MaxValue, double.MaxValue, double.MinValue, double.MinValue, double.MinValue },
+                (a, v) => new[] { Math.Min(a[0], v.X), Math.Min(a[1], v.Y), Math.Min(a[2], v.Z), Math.Max(a[3], v.X), Math.Max(a[4], v.Y), Math.Max(a[5], v.Z) });
+            Console.WriteLine(string.Format(CI, "  bounding box {0:F1} x {1:F1} x {2:F1} mm (+ wire)", bb[3] - bb[0] + d, bb[4] - bb[1] + d, bb[5] - bb[2] + d));
+            return 0;
+        }
         if (cmd == "obj")
         {
             var m = FoamAnalysis.FromObj(File.ReadAllText(args[1]));
