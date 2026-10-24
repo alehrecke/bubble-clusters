@@ -16,6 +16,47 @@ public static class Program
     public static int Main(string[] args)
     {
         string cmd = args.Length > 0 ? args[0] : "bench";
+        if (cmd == "solid")
+        {
+            // Ring Struts solid: solid <mesh.obj> <wire> [boreRadius (axis = Z through the origin; 0 = none)] [voxel] [cell]
+            var m = FoamAnalysis.FromObj(File.ReadAllText(args[1]));
+            double wire = double.Parse(args[2], CI), boreR = args.Length > 3 ? double.Parse(args[3], CI) : 0;
+            double voxel = args.Length > 4 ? double.Parse(args[4], CI) : 0, cell = args.Length > 5 ? double.Parse(args[5], CI) : 0.2;
+            var bore = boreR > 0 ? new CylinderHost(Vec3.Zero, new Vec3(0, 0, 1), boreR) : null;
+            var bs = BorderClean.Clean(m, cell, new BorderCleanSettings { Spacing = 0.25 * wire, IncludeHost = true });
+            var sw = Stopwatch.StartNew();
+            var wires = Struts.Prepare(bs, wire, bore);
+            var nodes = Struts.Nodes(bs, wires);
+            var warn = Struts.Check(m, bs, wires, nodes, wire, 0.3, 1.0);
+            long tCheck = sw.ElapsedMilliseconds;
+            var sol = Struts.Solid(wires, nodes, wire, 1.35, voxel, bore);
+            // Watertightness: every quad edge used exactly twice, in opposite directions.
+            var edgeUse = new Dictionary<long, int>(LongKey.Comparer);
+            foreach (var q in sol.Quads)
+                for (int e = 0; e < 4; e++)
+                {
+                    int a = q[e], b = q[(e + 1) % 4];
+                    long k = ((long)a << 32) | (uint)b;
+                    int c; edgeUse.TryGetValue(k, out c); edgeUse[k] = c + 1;
+                }
+            int open = 0, dup = 0;
+            foreach (var kv in edgeUse)
+            {
+                int a = (int)(kv.Key >> 32), b = (int)(kv.Key & 0xffffffff);
+                int back; edgeUse.TryGetValue(((long)b << 32) | (uint)a, out back);
+                if (back == 0) open++;
+                if (kv.Value > 1) dup++;
+            }
+            Console.WriteLine(string.Format(CI, "{0} wires, {1} nodes; warnings: {2} (check {3} ms)", wires.Count, nodes.Count,
+                string.Join(", ", warn.GroupBy(x => x.Kind).Select(gr => gr.Count() + " " + gr.Key)), tCheck));
+            Console.WriteLine(string.Format(CI, "solid: {0} verts, {1} quads, volume {2:F1} mm3 = {3:F2} g sterling, in {4} ms; open edges {5}, repeated edges {6}",
+                sol.V.Count, sol.Quads.Count, sol.Volume, sol.Volume / 1000 * 10.36, sw.ElapsedMilliseconds - tCheck, open, dup));
+            var sb = new System.Text.StringBuilder();
+            foreach (var v in sol.V) sb.Append("v ").Append(v.X.ToString("R", CI)).Append(' ').Append(v.Y.ToString("R", CI)).Append(' ').Append(v.Z.ToString("R", CI)).Append('\n');
+            foreach (var q in sol.Quads) sb.Append("f ").Append(q[0] + 1).Append(' ').Append(q[1] + 1).Append(' ').Append(q[2] + 1).Append(' ').Append(q[3] + 1).Append('\n');
+            File.WriteAllText("solid.obj", sb.ToString());
+            return 0;
+        }
         if (cmd == "struts")
         {
             // Castability of the border wireframe as round wire of diameter d (mm): struts <mesh.obj> <d> [cell]

@@ -91,7 +91,14 @@ Read these pages at the start of any session before writing code:
     `core/RingSeed` + the **Ring Seed** component (US size -> bore 11.63 + 0.8128 x size mm; a single file of BandRadius bubbles
     round the underside swelling over +-Spread degrees into TopCount extra bubbles on top; Seed for variations). Solver input
     **HostRing** (circle, index 17) = the finger; overrides HostPlane/HostMesh. `harness ring [size] [steps] [seed]`: size 7 =
-    66 bubbles, 60k tris at CellSize 0.2, one piece, ~60 s to relax. Next: Ring Struts (borders -> castable pipes, bore kept clear).
+    66 bubbles, 60k tris at CellSize 0.2, one piece, ~60 s to relax.
+    **Ring Struts** (2026-10-24, `core/Struts.cs`): borders -> round wire (default 1.0 mm; Shapeways Silver 925: 0.8 min, 0.3 clearance),
+    centrelines near the Bore pushed out to 0.3 x wire so the cut bore leaves 0.8 x wire of metal; live pipe preview + warnings
+    (short / clearance / closed / tight openings); Solid toggle = distance field (capsules + node spheres, bore cut) -> surface nets,
+    one closed quad mesh (a few hundred non-manifold edges where wires touch diagonally; Shapeways repair handles it).
+    `harness struts <obj> <wire>` and `harness solid <obj> <wire> [boreR] [voxel] [cell]`. Default Ring Seed bubbles are too small
+    for metal wire (43-55% of openings close); ~2x (BandRadius ~1.8, TopRadius ~4.4) leaves ~1.4 mm median openings.
+    Reference page (Shapeways limits to scale): https://claude.ai/artifact/2zAR8QwAiEiLAM7egP9x6i
   - `gh/BubbleSolver.template.cs`: a ~40-line paste-in shim → `python gh/build_gh.py` → `gh/BubbleSolver.cs` (fallback, same behaviour).
   `gh/check/` compiles the merged script against Rhino 8's DLLs (`cd gh/check && dotnet build`; `GH_CHECK` stubs). `gh/SETUP.md` = wiring.
 - `plot/` (since 2026-10-18): **bubbleplot**, headless pen-plot editions (net9 exe compiling `core/`). Seeded cluster →
