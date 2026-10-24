@@ -87,6 +87,11 @@ Read these pages at the start of any session before writing code:
     `core/FoamDual.cs`): bubble centroids joined through their shared films, as arcs (centre A -> point on the film -> centre B,
     never crossing a foreign film; `harness dual <obj>` checks this: 0 of 194 arcs vs 6 straight lines did on two clusters) or
     straight lines (Arcs toggle), plus stubs out through the outer films (Stubs toggle, StubLength). Next: dual faces/tets.
+    **Rings (2026-10-24):** `core/CylinderHost` (a finger: bubbles rest on the outside of a cylinder, the bore stays round) and
+    `core/RingSeed` + the **Ring Seed** component (US size -> bore 11.63 + 0.8128 x size mm; a single file of BandRadius bubbles
+    round the underside swelling over +-Spread degrees into TopCount extra bubbles on top; Seed for variations). Solver input
+    **HostRing** (circle, index 17) = the finger; overrides HostPlane/HostMesh. `harness ring [size] [steps] [seed]`: size 7 =
+    66 bubbles, 60k tris at CellSize 0.2, one piece, ~60 s to relax. Next: Ring Struts (borders -> castable pipes, bore kept clear).
   - `gh/BubbleSolver.template.cs`: a ~40-line paste-in shim → `python gh/build_gh.py` → `gh/BubbleSolver.cs` (fallback, same behaviour).
   `gh/check/` compiles the merged script against Rhino 8's DLLs (`cd gh/check && dotnet build`; `GH_CHECK` stubs). `gh/SETUP.md` = wiring.
 - `plot/` (since 2026-10-18): **bubbleplot**, headless pen-plot editions (net9 exe compiling `core/`). Seeded cluster →

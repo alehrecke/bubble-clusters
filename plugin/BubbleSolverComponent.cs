@@ -42,6 +42,7 @@ namespace BubbleClusters
             p.AddPlaneParameter("HostPlane", "HostPlane", "A wet surface the bubbles rest on; its Z axis points to the air.", GH_ParamAccess.item);
             p.AddMeshParameter("HostMesh", "HostMesh", "A wet mesh the bubbles rest on; normals point to the air.", GH_ParamAccess.item);
             p.AddNumberParameter("Gravity", "Gravity", "Film weight, toward the host (or -Z): helps bubbles roll into place. 0 = off (exact foam); ~0.02 gentle. Set back to 0 for exact angles.", GH_ParamAccess.item, 0);
+            p.AddCircleParameter("HostRing", "HostRing", "A finger the bubbles rest on: a cylinder along the circle's normal, radius = the circle's (the ring's bore). From Ring Seed. Overrides HostPlane / HostMesh.", GH_ParamAccess.item);
             for (int i = 2; i < p.ParamCount; i++) p[i].Optional = true;
         }
 
@@ -73,6 +74,9 @@ namespace BubbleClusters
             double gravity = 0;
             DA.GetData(16, ref gravity);
             engine.Gravity = gravity;
+            Circle ring = Circle.Unset;
+            if (!DA.GetData(17, ref ring)) ring = Circle.Unset;
+            engine.HostRing = ring;
 
             engine.Component = this;
             engine.AlwaysOutput = true;

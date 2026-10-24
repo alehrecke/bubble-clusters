@@ -41,3 +41,21 @@ public class SphereHost : HostSurface
     public override Vec3 Project(Vec3 x) { var d = x - C; double l = d.Length; return l > 1e-12 ? C + d * (R / l) : C + new Vec3(R, 0, 0); }
     public override Vec3 Normal(Vec3 x) { var d = x - C; double l = d.Length; return l > 1e-12 ? d / l : new Vec3(1, 0, 0); }
 }
+
+// A finger (2026-10-24, ring jewellery): bubbles resting on the outside of an infinite cylinder, axis through Origin
+// along Axis, radius R. The bore of the ring stays exactly round.
+public class CylinderHost : HostSurface
+{
+    public readonly Vec3 Origin, Axis; public readonly double R;
+    public CylinderHost(Vec3 origin, Vec3 axis, double r) { Origin = origin; Axis = axis.Normalized(); R = r; }
+    Vec3 Perp(Vec3 x) { var d = x - Origin; return d - Axis * Vec3.Dot(d, Axis); }
+    public override double Height(Vec3 x) { return Perp(x).Length - R; }
+    public override Vec3 Project(Vec3 x)
+    {
+        var p = Perp(x); double l = p.Length;
+        var dir = l > 1e-12 ? p / l : AnyPerp();
+        return x - p + dir * R;
+    }
+    public override Vec3 Normal(Vec3 x) { var p = Perp(x); double l = p.Length; return l > 1e-12 ? p / l : AnyPerp(); }
+    Vec3 AnyPerp() { var t = Math.Abs(Axis.X) < 0.9 ? new Vec3(1, 0, 0) : new Vec3(0, 1, 0); return Vec3.Cross(Axis, t).Normalized(); }
+}

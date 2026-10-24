@@ -24,6 +24,32 @@ public static class Program
             Console.WriteLine(FoamAnalysis.Report(s));
             return 0;
         }
+        if (cmd == "ring")
+        {
+            // Ring seed on a finger: ring [size] [steps] [seed]. Seeds, meshes on a CylinderHost, relaxes, reports.
+            var rs = new RingSeedSettings { Size = args.Length > 1 ? double.Parse(args[1], CI) : 7, Seed = args.Length > 3 ? int.Parse(args[3]) : 1 };
+            int steps = args.Length > 2 ? int.Parse(args[2]) : 1500;
+            List<Vec3> c; List<double> r;
+            RingSeed.Build(rs, out c, out r);
+            var host = new CylinderHost(rs.Origin, rs.Axis, RingSeed.BoreDiameter(rs.Size) / 2);
+            double h = 0.2;
+            string info;
+            var sw = Stopwatch.StartNew();
+            var s = new FoamSolver(MobiusMesher.Build(c, r, h, out info, host), new SolverSettings { Rearrange = true }) { Host = host };
+            s.SetTargetRadii(r);
+            Console.WriteLine(string.Format(CI, "ring size {0}: bore {1:F2} mm, {2} bubbles, r {3:F2}..{4:F2}, {5} tris, built in {6} ms",
+                rs.Size, RingSeed.BoreDiameter(rs.Size), c.Count, r.Min(), r.Max(), s.Mesh.T.Count, sw.ElapsedMilliseconds));
+            Run(s, steps, "relax");
+            bool[] onHost; var piece = Contacts.Pieces(s.Mesh, out onHost);
+            var vol = s.Mesh.Volumes();
+            int live = Enumerable.Range(1, s.Mesh.BubbleCount).Count(k => vol[k] > 0 && !s.IsDead(k));
+            int pieces = piece.Skip(1).Where(x => x > 0).Distinct().Count();
+            double minH = s.Mesh.V.Min(v => host.Height(v));
+            Console.WriteLine(string.Format(CI, "  live bubbles {0}, pieces {1}, lowest vertex {2:F3} mm off the finger", live, pieces, minH));
+            foreach (var l in FoamAnalysis.Report(s).Split('\n').Skip(1).Take(3)) Console.WriteLine("    " + l);
+            File.WriteAllText("ring.obj", FoamAnalysis.ToObj(s.Mesh));
+            return 0;
+        }
         if (cmd == "dual")
         {
             // Foam dual on a recorded mesh: dual <mesh.obj>. Each interior dual edge should cross the mesh only at

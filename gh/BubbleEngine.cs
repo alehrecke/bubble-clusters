@@ -24,7 +24,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-24a";
+    public const string Build = "2026-10-24b";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -217,6 +217,9 @@ public class BubbleEngine
     public bool AlwaysOutput;
     // Film weight (SolverSettings.Gravity), set by the front end before Solve. 0 = off.
     public double Gravity;
+    // A finger to rest on (CylinderHost: axis = the circle's normal, radius = the bore), set by the front end before
+    // Solve; Circle.Unset = none. Takes precedence over HostPlane / HostMesh. (2026-10-24, ring jewellery.)
+    public Circle HostRing = Circle.Unset;
 
     public void Solve(List<Point3d> Centers, List<double> Radii, double CellSize, bool Pack, bool Reset, bool Run,
                            double Pull, bool Add, double AddRadius, bool Pop, Point3d PopAt,
@@ -231,7 +234,13 @@ public class BubbleEngine
 
         // Rebuild only when the set of bubbles or the meshing changes; values are applied live.
         HostSurface host = null; string hostSig = "none";
-        if (InputWired("HostPlane") && HostPlane.IsValid)
+        if (HostRing.IsValid && HostRing.Radius > 0)
+        {
+            var o = HostRing.Center; var n = HostRing.Normal;
+            host = new CylinderHost(new Vec3(o.X, o.Y, o.Z), new Vec3(n.X, n.Y, n.Z), HostRing.Radius);
+            hostSig = "finger " + o + " " + n + " " + HostRing.Radius.ToString("R");
+        }
+        else if (InputWired("HostPlane") && HostPlane.IsValid)
         {
             host = new PlaneHost(new Vec3(HostPlane.Origin.X, HostPlane.Origin.Y, HostPlane.Origin.Z), new Vec3(HostPlane.ZAxis.X, HostPlane.ZAxis.Y, HostPlane.ZAxis.Z));
             hostSig = "plane " + HostPlane.Origin + " " + HostPlane.ZAxis;
