@@ -24,6 +24,36 @@ public static class Program
             Console.WriteLine(FoamAnalysis.Report(s));
             return 0;
         }
+        if (cmd == "dual")
+        {
+            // Foam dual on a recorded mesh: dual <mesh.obj>. Each interior dual edge should cross the mesh only at
+            // films between its own two bubbles; counts edges whose straight line / arc crosses a foreign film.
+            var m = FoamAnalysis.FromObj(File.ReadAllText(args[1]));
+            var sw = Stopwatch.StartNew();
+            var d = FoamDual.Build(m);
+            Console.WriteLine(string.Format(CI, "{0} bubbles -> {1} dual nodes, {2} edges ({3} interior, {4} stubs) in {5} ms",
+                m.BubbleCount, d.Nodes.Count, d.Edges.Count, d.Edges.Count(e => !e.IsStub), d.Edges.Count(e => e.IsStub), sw.ElapsedMilliseconds));
+            int straightBad = 0, arcBad = 0;
+            foreach (var e in d.Edges.Where(x => !x.IsStub))
+            {
+                var ca = d.ByBubble[e.A].Center; var cb = d.ByBubble[e.B].Center;
+                Func<List<Vec3>, bool> foreign = path =>
+                {
+                    for (int i = 0; i + 1 < path.Count; i++)
+                        foreach (var t in m.T)
+                        {
+                            if ((t.Neg == e.A || t.Neg == e.B) && (t.Pos == e.A || t.Pos == e.B)) continue;
+                            if (SegTri(path[i], path[i + 1], m.V[t.A], m.V[t.B], m.V[t.C])) return true;
+                        }
+                    return false;
+                };
+                if (foreign(new List<Vec3> { ca, cb })) straightBad++;
+                if (foreign(FoamDual.Arc3(ca, e.FilmPoint, cb, 16))) arcBad++;
+            }
+            Console.WriteLine(string.Format(CI, "interior edges crossing a foreign film: straight {0}, arc {1} (of {2})",
+                straightBad, arcBad, d.Edges.Count(e => !e.IsStub)));
+            return 0;
+        }
         if (cmd == "debug")
         {
             var clock = Stopwatch.StartNew();
@@ -1404,5 +1434,19 @@ public static class Program
         string outPath = Path.Combine(dir, "replay_result.obj");
         File.WriteAllText(outPath, FoamAnalysis.ToObj(s.Mesh));
         Console.WriteLine("  wrote " + outPath);
+    }
+
+    // Segment p-q against triangle a-b-c (Moller-Trumbore), strictly inside both.
+    static bool SegTri(Vec3 p, Vec3 q, Vec3 a, Vec3 b, Vec3 c)
+    {
+        var d = q - p; var e1 = b - a; var e2 = c - a;
+        var h = Vec3.Cross(d, e2); double det = Vec3.Dot(e1, h);
+        if (Math.Abs(det) < 1e-14) return false;
+        double f = 1 / det; var s0 = p - a;
+        double u = f * Vec3.Dot(s0, h); if (u < 1e-9 || u > 1 - 1e-9) return false;
+        var qv = Vec3.Cross(s0, e1);
+        double v = f * Vec3.Dot(d, qv); if (v < 1e-9 || u + v > 1 - 1e-9) return false;
+        double t = f * Vec3.Dot(e2, qv);
+        return t > 1e-9 && t < 1 - 1e-9;
     }
 }

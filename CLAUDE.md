@@ -83,6 +83,10 @@ Read these pages at the start of any session before writing code:
 - `gh/BubbleEngine.cs`: the GH-side logic (live loop, ApplyLive, preview, RunRecorder, RhinoMeshHost), shared by both front ends:
   - `plugin/` (since 2026-10-16): **the compiled plugin**. `dotnet build plugin -c Release` → `dist/BubbleClusters.gha` (net48,
     references Rhino 8's DLLs). Component "Bubble Solver" on the Pneuhaus tab. Install/update: `plugin/README.md`.
+    Downstream components take its Foam output: Border Curves, Border Detail, Stream Bed, and **Bubble Dual** (2026-10-24,
+    `core/FoamDual.cs`): bubble centroids joined through their shared films, as arcs (centre A -> point on the film -> centre B,
+    never crossing a foreign film; `harness dual <obj>` checks this: 0 of 194 arcs vs 6 straight lines did on two clusters) or
+    straight lines (Arcs toggle), plus stubs out through the outer films (Stubs toggle, StubLength). Next: dual faces/tets.
   - `gh/BubbleSolver.template.cs`: a ~40-line paste-in shim → `python gh/build_gh.py` → `gh/BubbleSolver.cs` (fallback, same behaviour).
   `gh/check/` compiles the merged script against Rhino 8's DLLs (`cd gh/check && dotnet build`; `GH_CHECK` stubs). `gh/SETUP.md` = wiring.
 - `plot/` (since 2026-10-18): **bubbleplot**, headless pen-plot editions (net9 exe compiling `core/`). Seeded cluster →
