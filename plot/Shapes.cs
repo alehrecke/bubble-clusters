@@ -16,7 +16,7 @@ public static partial class Edition
     static void ShapePack(string shape, List<Vec3> c, List<double> r, Random rng)
     {
         int n = r.Count;
-        double len = r.Sum(x => 2 * x) * 0.62;                 // guide-curve length for chain-like shapes
+        double len = r.Sum(x => 2 * x) * (shape == "ring" ? 0.8 : 0.62);   // guide-curve length for chain-like shapes
         var guide = new List<List<Vec3>>();                     // polylines the bubbles gather onto
         Func<int, Vec3, Vec3> target;
         var rot = RandomFrame(rng);
@@ -73,8 +73,10 @@ public static partial class Edition
         {
             // Round 2 (2026-10-24): round-1 buds were too small and close to read as anything but a ball; now bigger
             // (0.7 x), in 1-2 clumps, set further out so each reads as its own lobe.
-            int nMain = Math.Max(4, (int)Math.Round(n * 0.6));
-            for (int i = nMain; i < n; i++) r[i] *= 0.7;
+            // Round 3: a few clearly smaller buds (0.55 x) on a stalk, so the solver can't sink them into the hollows
+            // between the big bubbles; ShapeView then looks at it side-on so the lobes stick out of the silhouette.
+            int nMain = Math.Max(4, n - Math.Max(3, Math.Min(7, (int)Math.Round(n * 0.3))));
+            for (int i = nMain; i < n; i++) r[i] *= 0.55;
             double Rm = 0.9 * Math.Pow(nMain, 1.0 / 3) * r.Take(nMain).Average();
             int clumps = 1 + rng.Next(2);
             var dirs = Enumerable.Range(0, clumps).Select(k => RandomUnit(rng)).ToList();
@@ -89,7 +91,7 @@ public static partial class Edition
                 else
                 {
                     var d = dirs[(i - nMain) % clumps];
-                    anchor[i] = d * (Rm + 1.6 * r.Skip(nMain).Average());
+                    anchor[i] = d * (Rm + 2.4 * r.Skip(nMain).Average());
                     c.Add(anchor[i] + Jitter(rng, r[i]));
                 }
             }
@@ -209,7 +211,7 @@ public static partial class Edition
     // rings from near their axis so the hole shows, others from the seed. Principal axes from the mesh vertices.
     public static View ShapeView(FoamSolver s, string shape, int seed)
     {
-        if (shape == "ball" || shape == "buds" || shape == "raft") return MakeView(seed);
+        if (shape == "ball" || shape == "raft") return MakeView(seed);
         var V = s.Mesh.V;
         var m = V.Aggregate(Vec3.Zero, (a, b) => a + b) / V.Count;
         double[,] C = new double[3, 3];

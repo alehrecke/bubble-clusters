@@ -162,8 +162,10 @@ public static class Program
                 ge.SizeSkew = 1.0 + 2.4 * prng.NextDouble();
                 ge.Shape = shapes[i % shapes.Length];
                 // Satellites: --satellites 0..1 = chance per cluster (default 0.6), 1-5 of them.
-                if (prng.NextDouble() < double.Parse(opt("satellites", "0.6"), CI)) ge.Satellites = 1 + prng.Next(5);
-                if (ge.Shape == "chain" || ge.Shape == "ring" || ge.Shape == "branch") ge.Count = Math.Max(ge.Count, 16);
+                if (prng.NextDouble() < double.Parse(opt("satellites", "0.8"), CI)) ge.Satellites = 2 + prng.Next(6);
+                if (ge.Shape == "chain" || ge.Shape == "branch") ge.Count = Math.Max(ge.Count, 16);
+                // Rings (round 3): more, more even bubbles, so the loop stays open instead of collapsing to a clump.
+                if (ge.Shape == "ring") { ge.Count = Math.Max(ge.Count, 24); ge.RMax = Math.Min(ge.RMax, 2.0 * ge.RMin); ge.SizeSkew = 1.0; }
                 if (ge.Shape == "raft" || ge.Shape == "buds") ge.Count = Math.Max(ge.Count, 12);
                 ge.TriangleBudget = ge.Count > 25 ? 120000 : 90000;
                 var gs = Edition.Generate(ge, gdir, log);
