@@ -107,7 +107,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-24b";
+    public const string Build = "2026-10-24c";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -165,6 +165,7 @@ public class BubbleRun
 {
     public FoamHandle Handle;        // the live handle given out through the Foam output (one per run)
     public string Signature;
+    public Point3d[] LastCenters;     // the Centers input as last seen (to tell a redesign from a drag)
     public FoamSolver Solver;
     public RunRecorder Recorder;
     public Func<RunRecorder> MakeRecorder;
@@ -338,7 +339,20 @@ public class BubbleEngine
         BubbleRun run;
         BubbleState.Runs.TryGetValue(id, out run);
 
-        if (Reset || run == null || run.Signature != sig)
+        // A new design, not a drag: when most centres jump at once (a generator upstream such as Ring Seed recomputed
+        // everything; run 2026-10-24_180011: BandRadius changed, all 70 bubbles were "grabbed" and dragged with Pull 5
+        // while every radius changed, and the band tore), rebuild from the new inputs instead of dragging them all.
+        bool redesign = false;
+        if (run != null && run.Signature == sig && run.LastCenters != null && run.LastCenters.Length == Centers.Count && Centers.Count >= 4)
+        {
+            int moved = 0;
+            for (int i = 0; i < Centers.Count; i++)
+                if (Centers[i].DistanceTo(run.LastCenters[i]) > 0.1 * Radii[i]) moved++;
+            redesign = moved * 2 > Centers.Count;
+        }
+        if (run != null) run.LastCenters = Centers.ToArray();
+
+        if (Reset || redesign || run == null || run.Signature != sig)
         {
             double h = CellSize > 0 ? CellSize : Radii.Min() / 6.0;
             // Refuse builds that would lock Rhino up. Upper bound: every sphere fully exposed, each at its own edge size.
@@ -354,6 +368,8 @@ public class BubbleEngine
                 return;
             }
             run = Build(Centers, Radii, h, Pack, sig, host);
+            run.LastCenters = Centers.ToArray();
+            if (redesign) run.Event("new design upstream (most centres moved at once): rebuilt");
             BubbleState.Runs[id] = run;
             run.AppliedRadii = string.Join(",", Radii.Select(r => r.ToString("R")));
             run.Baseline = Centers.ToArray();
@@ -989,6 +1005,11 @@ public class RunRecorder
             var hp = host as PlaneHost;
             if (hp != null)
                 sb.Append("host plane ").Append(string.Join(" ", new[] { hp.Origin.X, hp.Origin.Y, hp.Origin.Z, hp.N.X, hp.N.Y, hp.N.Z }.Select(x => x.ToString("R", CI)))).Append('\n');
+            else if (host is CylinderHost)
+            {
+                var hc = (CylinderHost)host;
+                sb.Append("host finger ").Append(string.Join(" ", new[] { hc.Origin.X, hc.Origin.Y, hc.Origin.Z, hc.Axis.X, hc.Axis.Y, hc.Axis.Z, hc.R }.Select(x => x.ToString("R", CI)))).Append('\n');
+            }
             else if (host != null) sb.Append("# host mesh (not recorded; replays run without it)\n");
             for (int i = 0; i < c.Count; i++)
                 sb.Append("bubble ").Append(c[i].X.ToString("R", CI)).Append(' ').Append(c[i].Y.ToString("R", CI)).Append(' ')

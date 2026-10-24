@@ -662,6 +662,9 @@ public static class Program
             if (p[0] == "host" && p[1] == "plane")
                 host = new PlaneHost(new Vec3(double.Parse(p[2], CI), double.Parse(p[3], CI), double.Parse(p[4], CI)),
                                      new Vec3(double.Parse(p[5], CI), double.Parse(p[6], CI), double.Parse(p[7], CI)));
+            if (p[0] == "host" && p[1] == "finger")
+                host = new CylinderHost(new Vec3(double.Parse(p[2], CI), double.Parse(p[3], CI), double.Parse(p[4], CI)),
+                                        new Vec3(double.Parse(p[5], CI), double.Parse(p[6], CI), double.Parse(p[7], CI)), double.Parse(p[8], CI));
         }
         // CLAMP=1: apply the GH build's radius floor (1.5 x CellSize).
         if (Environment.GetEnvironmentVariable("CLAMP") != null) r = r.Select(x => Math.Max(x, 1.5 * h)).ToList();
