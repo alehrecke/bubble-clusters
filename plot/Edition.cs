@@ -19,6 +19,7 @@ public class EditionSettings
     // (Before 2026-10-18 evening: 9..15 bubbles, 0.5..1.6, skew 1.6, 60k triangles; old seeds look different now.)
     public double RMin = 0.3, RMax = 1.9, SizeSkew = 2.2;
     public string Shape = "ball";      // cluster silhouette: ball | chain | ring | raft | branch | buds (Shapes.cs)
+    public int Satellites = 0;         // free-floating extras around the cluster: single bubbles and small clusters (Shapes.cs)
     public int TriangleBudget = 90000;
     public bool PlotterCopy = true;    // also write *_plotter-landscape.svg for portrait sheets
     public int DetailBatches = 0;      // Border Detail batches after relaxing (0 = none)
@@ -77,6 +78,7 @@ public static partial class Edition
             }
             ClusterPacker.Pack(c, r, 1000, 0.01);
         }
+        if (e.Satellites > 0) AddSatellites(c, r, e.Satellites, rng);
         // Cell size: about a fifth of the smallest radius, coarser if the mesh would get too big.
         double area = r.Sum(x => 4 * Math.PI * x * x);
         double h = Math.Max(r.Min() / 5, Math.Sqrt(area / (0.433 * e.TriangleBudget)));

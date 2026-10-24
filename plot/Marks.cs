@@ -54,7 +54,7 @@ public static partial class Edition
     public static Plot MarkOverview(FoamSolver s, View v, HatchStyle baseSt, EditionSettings e, MarkSettings ms)
     {
         var p = MarkOverviewRaw(s, v, baseSt, e, ms);
-        AddLabel(p, MarkSettings.NameOf(ms.Kind) + "  (" + ms.Kind + ")" + (ms.Tag != "" ? "  " + ms.Tag : "") + "  SEED " + v.Seed);
+        AddLabel(p, MarkSettings.NameOf(ms.Kind) + (p.Width < 250 ? "" : "  (" + ms.Kind + ")") + (ms.Tag != "" ? "  " + ms.Tag : "") + "  SEED " + v.Seed, p.Width < 250 ? 2.6 : 3.2);
         return p;
     }
 

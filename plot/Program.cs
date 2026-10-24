@@ -161,6 +161,8 @@ public static class Program
                 ge.RMax = ge.RMin * (2.5 + 5 * prng.NextDouble());
                 ge.SizeSkew = 1.0 + 2.4 * prng.NextDouble();
                 ge.Shape = shapes[i % shapes.Length];
+                // Satellites: --satellites 0..1 = chance per cluster (default 0.6), 1-5 of them.
+                if (prng.NextDouble() < double.Parse(opt("satellites", "0.6"), CI)) ge.Satellites = 1 + prng.Next(5);
                 if (ge.Shape == "chain" || ge.Shape == "ring" || ge.Shape == "branch") ge.Count = Math.Max(ge.Count, 16);
                 if (ge.Shape == "raft" || ge.Shape == "buds") ge.Count = Math.Max(ge.Count, 12);
                 ge.TriangleBudget = ge.Count > 25 ? 120000 : 90000;
@@ -168,8 +170,8 @@ public static class Program
                 File.WriteAllText(Path.Combine(gdir, "cluster_" + seed + ".obj"), FoamAnalysis.ToObj(gs.Mesh));
                 ge.SheetW = A3W / 2; ge.SheetH = A3H / 2;
                 var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
-                var ms = new MarkSettings { Kind = kind, Tag = (ge.Shape != "ball" ? ge.Shape.ToUpperInvariant() + "  " : "") + ge.Count + " CELLS" + (ge.Variant > 0 ? "  V" + ge.Variant : "") };
-                tiles.Add(Edition.MarkOverview(gs, Edition.MakeView(seed), hs, ge, ms));
+                var ms = new MarkSettings { Kind = kind, Tag = (ge.Shape != "ball" ? ge.Shape.ToUpperInvariant() + "  " : "") + ge.Count + " CELLS" + (ge.Satellites > 0 ? " +" + ge.Satellites + " SAT" : "") + (ge.Variant > 0 ? "  V" + ge.Variant : "") };
+                tiles.Add(Edition.MarkOverview(gs, Edition.ShapeView(gs, ge.Shape, seed), hs, ge, ms));
                 specs.Add(string.Format(CI, "{0}: " + ge.Shape + ", {1} bubbles, r {2:F2}..{3:F2}, skew {4:F1}, variant {5}", seed, ge.Count, ge.RMin, ge.RMax, ge.SizeSkew, ge.Variant));
                 log("gallery " + (i + 1) + "/" + nRuns + ": " + specs[specs.Count - 1]);
             }

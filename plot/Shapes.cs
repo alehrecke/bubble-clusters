@@ -71,11 +71,12 @@ public static partial class Edition
         }
         else // buds
         {
-            int nMain = Math.Max(4, (int)Math.Round(n * 0.68));
-            // Buds are smaller than the main body's bubbles.
-            for (int i = nMain; i < n; i++) r[i] *= 0.5;
+            // Round 2 (2026-10-24): round-1 buds were too small and close to read as anything but a ball; now bigger
+            // (0.7 x), in 1-2 clumps, set further out so each reads as its own lobe.
+            int nMain = Math.Max(4, (int)Math.Round(n * 0.6));
+            for (int i = nMain; i < n; i++) r[i] *= 0.7;
             double Rm = 0.9 * Math.Pow(nMain, 1.0 / 3) * r.Take(nMain).Average();
-            int clumps = 2 + rng.Next(2);
+            int clumps = 1 + rng.Next(2);
             var dirs = Enumerable.Range(0, clumps).Select(k => RandomUnit(rng)).ToList();
             var anchor = new Vec3[n];
             for (int i = 0; i < n; i++)
@@ -88,7 +89,7 @@ public static partial class Edition
                 else
                 {
                     var d = dirs[(i - nMain) % clumps];
-                    anchor[i] = d * (Rm * 1.25);
+                    anchor[i] = d * (Rm + 1.6 * r.Skip(nMain).Average());
                     c.Add(anchor[i] + Jitter(rng, r[i]));
                 }
             }
@@ -112,9 +113,142 @@ public static partial class Edition
                     c[j] = c[j] - corr * (1 - wi);
                 }
         }
+        // Round 2: keep it in one piece. Round-1 chains, rings and branches often came apart (gaps along the guide:
+        // nothing pulled bubbles along it), leaving stray bubbles on the sheet. Overlapping spheres (d < ra + rb)
+        // become films in the mesher; any piece not touching the largest one is moved against it, then repacked.
+        for (int rep = 0; rep < 30; rep++)
+        {
+            var comp = Components(c, r);
+            int nComp = comp.Max() + 1;
+            if (nComp == 1) break;
+            int main = Enumerable.Range(0, nComp).OrderByDescending(k => comp.Count(x => x == k)).First();
+            for (int k = 0; k < nComp; k++)
+            {
+                if (k == main) continue;
+                int bi = -1, bj = -1; double bd = double.MaxValue;
+                for (int i = 0; i < n; i++)
+                    if (comp[i] == k)
+                        for (int j = 0; j < n; j++)
+                            if (comp[j] == main) { double d = (c[i] - c[j]).Length - r[i] - r[j]; if (d < bd) { bd = d; bi = i; bj = j; } }
+                var dir = (c[bi] - c[bj]).Normalized();
+                var shift = c[bj] + dir * (0.95 * ClusterPacker.PairDistance(r[bi], r[bj])) - c[bi];
+                for (int i = 0; i < n; i++) if (comp[i] == k) c[i] = c[i] + shift;
+            }
+            for (int it = 0; it < 200; it++)
+                for (int i = 0; i < n; i++)
+                    for (int j = i + 1; j < n; j++)
+                    {
+                        Vec3 d = c[j] - c[i];
+                        double l = d.Length, want = ClusterPacker.PairDistance(r[i], r[j]);
+                        if (l >= want) continue;
+                        if (l < 1e-9) { d = new Vec3(1e-3, 0, 0); l = 1e-3; }
+                        Vec3 corr = d / l * (0.5 * (l - want));
+                        double wi = r[j] / (r[i] + r[j]);
+                        c[i] = c[i] + corr * wi; c[j] = c[j] - corr * (1 - wi);
+                    }
+        }
         // Centre on the origin.
         var mid = c.Aggregate(Vec3.Zero, (a, b) => a + b) / n;
         for (int i = 0; i < n; i++) c[i] = c[i] - mid;
+    }
+
+    // Free-floating extras (Alex, 2026-10-24: "I kind of liked the free floating bubbles ... a mix of smaller and
+    // larger clusters"). Each satellite is a single bubble or a small cluster of 2-6 (packed at the double-bubble
+    // spacing), smaller than the main bubbles, set clear of the cluster at 0.4-2.5 mean radii, never touching it
+    // or each other, so the solver keeps them as separate pieces.
+    static void AddSatellites(List<Vec3> c, List<double> r, int count, Random rng)
+    {
+        double rMean = r.Average();
+        var mid = c.Aggregate(Vec3.Zero, (a, b) => a + b) / c.Count;
+        double reach = c.Select((p, i) => (p - mid).Length + r[i]).Max();
+        int nMain = c.Count;
+        for (int sIdx = 0; sIdx < count; sIdx++)
+        {
+            double u = rng.NextDouble();
+            int size = u < 0.45 ? 1 : u < 0.7 ? 2 : u < 0.85 ? 3 : 4 + rng.Next(3);
+            var gr = new List<double>(); var gc = new List<Vec3>();
+            for (int k = 0; k < size; k++) gr.Add(rMean * (0.3 + 0.55 * Math.Pow(rng.NextDouble(), 1.5)));
+            for (int k = 0; k < size; k++) gc.Add(RandomUnit(rng) * (0.5 * gr.Average() * rng.NextDouble()));
+            if (size > 1) ClusterPacker.Pack(gc, gr, 400, 0.02);
+            double gReach = gc.Select((p, k) => p.Length + gr[k]).Max();
+            for (int attempt = 0; attempt < 60; attempt++)
+            {
+                var dir = RandomUnit(rng);
+                var at = mid + dir * (reach + gReach + rMean * (0.4 + 2.1 * rng.NextDouble()));
+                bool clear = true;
+                for (int k = 0; k < size && clear; k++)
+                    for (int i = 0; i < c.Count && clear; i++)
+                        if ((c[i] - (at + gc[k])).Length < (r[i] + gr[k]) * (i < nMain ? 1.25 : 1.15)) clear = false;
+                if (!clear) continue;
+                for (int k = 0; k < size; k++) { c.Add(at + gc[k]); r.Add(gr[k]); }
+                break;
+            }
+        }
+    }
+
+    // Connected pieces: bubbles whose spheres overlap (they will share a film).
+    static int[] Components(List<Vec3> c, List<double> r)
+    {
+        int n = c.Count; var comp = Enumerable.Repeat(-1, n).ToArray(); int k = 0;
+        for (int s = 0; s < n; s++)
+        {
+            if (comp[s] >= 0) continue;
+            var st = new Stack<int>(); st.Push(s); comp[s] = k;
+            while (st.Count > 0)
+            {
+                int i = st.Pop();
+                for (int j = 0; j < n; j++)
+                    if (comp[j] < 0 && (c[i] - c[j]).Length < 0.98 * (r[i] + r[j])) { comp[j] = k; st.Push(j); }
+            }
+            k++;
+        }
+        return comp;
+    }
+
+    // A view that shows a shaped cluster's form: chains and branches side-on (perpendicular to their long axis),
+    // rings from near their axis so the hole shows, others from the seed. Principal axes from the mesh vertices.
+    public static View ShapeView(FoamSolver s, string shape, int seed)
+    {
+        if (shape == "ball" || shape == "buds" || shape == "raft") return MakeView(seed);
+        var V = s.Mesh.V;
+        var m = V.Aggregate(Vec3.Zero, (a, b) => a + b) / V.Count;
+        double[,] C = new double[3, 3];
+        foreach (var p in V)
+        {
+            var d = p - m; double[] x = { d.X, d.Y, d.Z };
+            for (int a = 0; a < 3; a++) for (int b = 0; b < 3; b++) C[a, b] += x[a] * x[b];
+        }
+        Func<double[], double[]> mul = x => new[] { C[0, 0] * x[0] + C[0, 1] * x[1] + C[0, 2] * x[2], C[1, 0] * x[0] + C[1, 1] * x[1] + C[1, 2] * x[2], C[2, 0] * x[0] + C[2, 1] * x[1] + C[2, 2] * x[2] };
+        double[] e1 = { 1, 0.3, 0.2 };
+        for (int it = 0; it < 60; it++) { e1 = mul(e1); double l = Math.Sqrt(e1.Sum(z => z * z)); for (int a = 0; a < 3; a++) e1[a] /= l; }
+        var axis = new Vec3(e1[0], e1[1], e1[2]);
+        var rng = new Random(seed * 17 + 3);
+        double el = 15 + 20 * rng.NextDouble();
+        Vec3 look;
+        if (shape == "ring")
+        {
+            // Smallest axis = ring normal: deflate e1 and its partner, take the cross product of the two largest.
+            double lam = e1.Zip(mul(e1), (a, b) => a * b).Sum();
+            double[] e2 = { -e1[1], e1[0], 0.3 };
+            for (int it = 0; it < 60; it++)
+            {
+                var y = mul(e2); for (int a = 0; a < 3; a++) y[a] -= lam * e1[a] * e1.Zip(e2, (u, w) => u * w).Sum();
+                double dp = y.Zip(e1, (u, w) => u * w).Sum(); for (int a = 0; a < 3; a++) y[a] -= dp * e1[a];
+                double l = Math.Sqrt(y.Sum(z => z * z)); for (int a = 0; a < 3; a++) e2[a] = y[a] / l;
+            }
+            look = Vec3.Cross(axis, new Vec3(e2[0], e2[1], e2[2])).Normalized();
+            if (look.Z > 0) look = look * -1;
+            // Tilt off the exact axis a little so it reads as a ring in 3D, and keep the elevation sensible.
+            el = Math.Min(70, Math.Max(25, Math.Asin(Math.Min(1, -look.Z)) * 180 / Math.PI));
+            double azr = Math.Atan2(-look.Y, -look.X) * 180 / Math.PI + 15;
+            return MakeView(seed, azr, el);
+        }
+        var h = new Vec3(-axis.Y, axis.X, 0);
+        if (h.LengthSq < 1e-6) return MakeView(seed);
+        h = h.Normalized();
+        if (rng.NextDouble() < 0.5) h = h * -1;
+        double az = Math.Atan2(-h.Y, -h.X) * 180 / Math.PI;
+        return MakeView(seed, az, el);
     }
 
     static Vec3 Nearest(List<List<Vec3>> guide, Vec3 q)
