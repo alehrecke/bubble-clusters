@@ -107,7 +107,7 @@ public static class Settings
 {
     // Bump on every change that reaches Alex (shown at the top of Info and in each run recording), so a
     // run can be matched to the build that made it. Format: date + letter.
-    public const string Build = "2026-10-24d";
+    public const string Build = "2026-10-24e";
 
     // Solver (see SolverSettings in the core for what each does).
     public static readonly double Momentum = 0.9;
@@ -416,8 +416,12 @@ public class BubbleEngine
                 double drift = 0;
                 if (run.WindowCentroids != null)
                     for (int k = 1; k < cen.Length && k < run.WindowCentroids.Length; k++) drift = Math.Max(drift, (cen[k] - run.WindowCentroids[k]).Length);
+                // The drift test is only for forces that move bubbles without changing area (Gather, Gravity, drags).
+                // Without them it never passed on a ring (run 2026-10-24_221115): bubbles kept creeping ~0.03 mm per
+                // window along the finger while the area had long settled (1e-5 per window), so it ran to the step limit.
+                bool forces = sv.S.Gather > 0 || sv.S.Gravity > 0 || sv.PullOn.Any(x => x);
                 if (!sv.RebuildPending && sv.PendingAdds == 0 && sv.PendingPops == 0 && Math.Abs(sv.Area - run.WindowArea) < Settings.SettledAreaChange * sv.Area &&
-                    drift < 0.1 * sv.TargetEdge)
+                    (!forces || drift < 0.1 * sv.TargetEdge))
                 { run.Settled = true; run.StopReason = "area stable"; }
                 run.WindowArea = sv.Area; run.WindowStep = sv.Steps; run.WindowCentroids = cen;
             }
