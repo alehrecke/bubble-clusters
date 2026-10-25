@@ -36,7 +36,7 @@ public class MarkSettings
     {
         { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
         { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
-        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "glass-soft", "Mist Soft" }, { "glass-nosil", "Mist Open" }, { "mist-dew-refl-nosil", "Dew Mirror Open" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-soap", "Soap Mist" }, { "mist-dew", "Dew" }, { "mist-dew-refl", "Dew Mirror" }, { "mist-dew-refl-body", "Dew Window" }, { "mist-dew-refl-full", "Dew Room" }, { "mist-refl", "Mist Room" }, { "mist-dew-dense", "Dew Dense" }, { "mist-soap-dense", "Soap Mist Dense" }, { "mist-soap-lines", "Soap Mist Lines" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "glass-soft", "Mist Soft" }, { "glass-nosil", "Mist Open" }, { "glass-bare", "Mist Bare" }, { "glass-bare-noground", "Mist Bare, no ground" }, { "mist-dew-refl-nosil", "Dew Mirror Open" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-soap", "Soap Mist" }, { "mist-dew", "Dew" }, { "mist-dew-refl", "Dew Mirror" }, { "mist-dew-refl-body", "Dew Window" }, { "mist-dew-refl-full", "Dew Room" }, { "mist-refl", "Mist Room" }, { "mist-dew-dense", "Dew Dense" }, { "mist-soap-dense", "Soap Mist Dense" }, { "mist-soap-lines", "Soap Mist Lines" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
     };
 
     public static string Resolve(string kindOrName)
@@ -85,13 +85,15 @@ public static partial class Edition
             var inSt = Clone(baseSt); inSt.Field = "facet"; inSt.Hyper = false; inSt.ToneScale = 0.8;
             inSt.SepMin *= 1.25; inSt.SepMax *= 1.1;
             var inner = Frame(s, v, -1, OverviewFrame, p, classic, inSt, fit);
-            if (ms.Kind == "glass-pure" || ms.Kind == "glass-soft" || ms.Kind == "glass-nosil")
+            if (ms.Kind == "glass-pure" || ms.Kind == "glass-soft" || ms.Kind == "glass-nosil" || ms.Kind.StartsWith("glass-bare"))
             {
                 // Dots only: the borders and silhouette are drawn as dense runs of dots instead of lines
                 // (visible ones tight, the internal network behind sparser).
                 var inMs = new MarkSettings { DotMin = ms.DotMin * 1.25, DotMax = ms.DotMax, DotGamma = ms.DotGamma, DotLength = ms.DotLength };
                 p.Layer("inner").AddRange(Stipple(inner, inMs, rng, 0.8));
-                p.Layer("innerborders").AddRange(DotLines(Hidden(s, skin, 0, false), 0.55, 0.06, ms, rng));
+                // glass-bare (round 3): no dotted borders at all, inside or out; only the stippled surfaces.
+                if (!ms.Kind.StartsWith("glass-bare"))
+                    p.Layer("innerborders").AddRange(DotLines(Hidden(s, skin, 0, false), ms.Kind == "glass-soft" ? 0.8 : 0.55, 0.06, ms, rng));
                 var dskin = Frame(s, v, 0, OverviewFrame, p, e, Clone(baseSt), fit);
                 p.Layer("hatch").AddRange(Stipple(dskin, ms, rng, 1.05));
                 if (ms.Kind == "glass-pure")
@@ -103,9 +105,11 @@ public static partial class Edition
                     // around the cluster very sparsely, so the edge is only where the tone changes.
                     List<List<V2>> front, sil;
                     OutlineParts(s, dskin, out front, out sil);
-                    p.Layer("hatch").AddRange(DotLines(front, 0.5, 0.08, ms, rng));
-                    if (ms.Kind == "glass-soft") p.Layer("hatch").AddRange(DotLines(sil, 0.45, 0.08, ms, rng));
-                    else p.Layer("background").AddRange(SparseGround(dskin, p, rng));
+                    // Round 3: glass-soft sparser again (0.8 / 0.7 mm).
+                    bool bare = ms.Kind.StartsWith("glass-bare");
+                    if (!bare) p.Layer("hatch").AddRange(DotLines(front, ms.Kind == "glass-soft" ? 0.8 : 0.5, 0.08, ms, rng));
+                    if (ms.Kind == "glass-soft") p.Layer("hatch").AddRange(DotLines(sil, 0.7, 0.08, ms, rng));
+                    else if (ms.Kind != "glass-bare-noground") p.Layer("background").AddRange(SparseGround(dskin, p, rng));
                 }
                 return p;
             }
