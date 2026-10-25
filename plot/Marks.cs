@@ -36,7 +36,7 @@ public class MarkSettings
     {
         { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
         { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
-        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-soap", "Soap Mist" }, { "mist-dew", "Dew" }, { "mist-dew-refl", "Dew Mirror" }, { "mist-dew-refl-body", "Dew Window" }, { "mist-dew-refl-full", "Dew Room" }, { "mist-refl", "Mist Room" }, { "mist-dew-dense", "Dew Dense" }, { "mist-soap-dense", "Soap Mist Dense" }, { "mist-soap-lines", "Soap Mist Lines" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "glass-soft", "Mist Soft" }, { "glass-nosil", "Mist Open" }, { "mist-dew-refl-nosil", "Dew Mirror Open" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-soap", "Soap Mist" }, { "mist-dew", "Dew" }, { "mist-dew-refl", "Dew Mirror" }, { "mist-dew-refl-body", "Dew Window" }, { "mist-dew-refl-full", "Dew Room" }, { "mist-refl", "Mist Room" }, { "mist-dew-dense", "Dew Dense" }, { "mist-soap-dense", "Soap Mist Dense" }, { "mist-soap-lines", "Soap Mist Lines" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
     };
 
     public static string Resolve(string kindOrName)
@@ -85,7 +85,7 @@ public static partial class Edition
             var inSt = Clone(baseSt); inSt.Field = "facet"; inSt.Hyper = false; inSt.ToneScale = 0.8;
             inSt.SepMin *= 1.25; inSt.SepMax *= 1.1;
             var inner = Frame(s, v, -1, OverviewFrame, p, classic, inSt, fit);
-            if (ms.Kind == "glass-pure")
+            if (ms.Kind == "glass-pure" || ms.Kind == "glass-soft" || ms.Kind == "glass-nosil")
             {
                 // Dots only: the borders and silhouette are drawn as dense runs of dots instead of lines
                 // (visible ones tight, the internal network behind sparser).
@@ -94,7 +94,19 @@ public static partial class Edition
                 p.Layer("innerborders").AddRange(DotLines(Hidden(s, skin, 0, false), 0.55, 0.06, ms, rng));
                 var dskin = Frame(s, v, 0, OverviewFrame, p, e, Clone(baseSt), fit);
                 p.Layer("hatch").AddRange(Stipple(dskin, ms, rng, 1.05));
-                p.Layer("hatch").AddRange(DotLines(Outlines(s, dskin, 0), 0.32, 0.05, ms, rng));
+                if (ms.Kind == "glass-pure")
+                    p.Layer("hatch").AddRange(DotLines(Outlines(s, dskin, 0), 0.32, 0.05, ms, rng));
+                else
+                {
+                    // Round 2 (Alex, 2026-10-25: "soften the stippled outlines"): visible borders 0.5 mm apart with
+                    // more scatter; glass-soft keeps a soft silhouette, glass-nosil drops it and stipples the paper
+                    // around the cluster very sparsely, so the edge is only where the tone changes.
+                    List<List<V2>> front, sil;
+                    OutlineParts(s, dskin, out front, out sil);
+                    p.Layer("hatch").AddRange(DotLines(front, 0.5, 0.08, ms, rng));
+                    if (ms.Kind == "glass-soft") p.Layer("hatch").AddRange(DotLines(sil, 0.45, 0.08, ms, rng));
+                    else p.Layer("background").AddRange(SparseGround(dskin, p, rng));
+                }
                 return p;
             }
             if (ms.Kind == "glass-dots")
@@ -296,6 +308,53 @@ public static partial class Edition
             }
         }
         return res;
+    }
+
+    // Outlines split into the visible borders and the silhouette (Outlines() returns both together).
+    static void OutlineParts(FoamSolver s, Scene sc, out List<List<V2>> front, out List<List<V2>> sil)
+    {
+        var borders = BorderClean.Clean(s.Mesh, s.TargetEdge, new BorderCleanSettings { Spacing = s.TargetEdge * 0.5, IncludeHost = false });
+        var lines = new List<List<Vec3>>();
+        foreach (var b in borders)
+        {
+            if (!b.Bubbles.Contains(0)) continue;
+            var pts = new List<Vec3>(b.Points);
+            if (b.Closed && pts.Count > 0) pts.Add(pts[0]);
+            lines.Add(pts);
+        }
+        front = Hatcher.VisibleRuns(sc, lines, 4 / (sc.S * sc.Res));
+        sil = Hatcher.VisibleRuns(sc, sc.Silhouettes(), 1.0 / sc.S, 0.6).Select(Smooth2).ToList();
+    }
+
+    // Very sparse stipple on the paper around the cluster. Round 2: without the silhouette the lit edges vanished
+    // into the paper, so the ground darkens in a soft halo just outside the cluster (the edge reads as the cluster
+    // against a slightly darker ground) and fades to a very sparse dusting further out. A 0.8 mm clear gap at the
+    // silhouette keeps the edge clean; fades out toward the sheet edge.
+    static List<List<V2>> SparseGround(Scene sc, Plot p, Random rng)
+    {
+        var ms = new MarkSettings { DotMin = 0.55, DotMax = 6, DotGamma = 1.1, DotLength = 0.2 };
+        double x0 = 0.05 * p.Width, y0 = 0.05 * p.Height, x1 = 0.95 * p.Width, y1 = 0.86 * p.Height;
+        double g = 0.4;
+        int gw = (int)Math.Ceiling((x1 - x0) / g) + 1, gh = (int)Math.Ceiling((y1 - y0) / g) + 1;
+        var dist = new double[gw * gh];
+        for (int j = 0; j < gh; j++)
+            for (int i = 0; i < gw; i++)
+                dist[j * gw + i] = sc.Covered(new V2(x0 + i * g, y0 + j * g)) ? 0 : 1e9;
+        Chamfer(dist, gw, gh, g);
+        Func<V2, double> D = q =>
+        {
+            int i = (int)Math.Round((q.X - x0) / g), j = (int)Math.Round((q.Y - y0) / g);
+            return i < 0 || j < 0 || i >= gw || j >= gh ? 1e9 : dist[j * gw + i];
+        };
+        return ToneStipple(q =>
+        {
+            double d = D(q);
+            if (d < 0.8) return 0;
+            double edge = Math.Min(Math.Min(q.X - x0, x1 - q.X), Math.Min(q.Y - y0, y1 - q.Y));
+            double fade = Math.Max(0, Math.Min(1, edge / 15));
+            double halo = 0.42 * Math.Exp(-(d - 0.8) / 4.5);
+            return (0.13 + halo) * fade * (0.85 + 0.15 * Noise(q.X / 30, q.Y / 30, 91));
+        }, ms, rng, x0, y0, x1, y1);
     }
 
     // ---------- hatched ground ----------

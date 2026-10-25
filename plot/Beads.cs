@@ -38,7 +38,7 @@ public static partial class Edition
         }
         else
         {
-            var mm = new MarkSettings { Kind = "glass-pure" };
+            var mm = new MarkSettings { Kind = ms.Kind.EndsWith("-nosil") ? "glass-nosil" : "glass-pure" };
             p = MarkOverviewRaw(s, v, baseSt, e, mm);
             sc = Frame(s, v, 0, OverviewFrame, p, e, null);
         }
