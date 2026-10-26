@@ -22,18 +22,11 @@ public static partial class Edition
         bool bodyWin = kind.EndsWith("-refl-body") || kind.EndsWith("-refl-full") || kind == "mist-refl";
         bool bodyFloor = kind.EndsWith("-refl-full") || kind == "mist-refl";
         var env = new Env(sc);
-        var bs = new BeadSettings { NodeRadius = dense ? 0.2 : 0.15, Decay = dense ? 0.36 : 0.28, BorderChance = kind.EndsWith("-nosil") ? 0.6 : 0.95, NodeClump = dense ? 12 : 8, Overlap = 1.1,
+        var bs = new BeadSettings { NodeRadius = dense ? 0.2 : 0.15, Decay = dense ? 0.36 : 0.28, BorderChance = kind.EndsWith("-nosil") ? 0.6 : 0.95, NodeClump = dense ? 12 : 8, Overlap = 0.8,
                                    Irregular = kind.EndsWith("-nosil") ? 0.8 : 0 };
         List<KeyValuePair<V2, double>> discs; List<KeyValuePair<Vec3, double>> placed;
         Beads(s, sc, bs, rng, true, out discs, out placed);
 
-        // Round 2 (Alex, 2026-10-25: the larger beads "overlap with themselves in a way that flattens the image ... feel
-        // a little too unreal"): beads no longer overlap each other (Overlap 1.1: dew drops would merge), sizes are
-        // capped at 0.11 x the mean bubble radius, they sink deeper (0.42 r), and each gets a dark contact rim where it
-        // meets the film, so it reads as sitting in the surface rather than on top of it.
-        var vols = s.Mesh.Volumes();
-        double rMeanB = Enumerable.Range(1, s.Mesh.BubbleCount).Where(k => vols[k] > 0).Average(k => Math.Pow(3 * vols[k] / (4 * Math.PI), 1.0 / 3));
-        double capR = 0.11 * rMeanB;
         // Sink each bead into the skin along the skin normal under its centre.
         var beads = new List<KeyValuePair<Vec3, double>>();
         foreach (var b in placed)
@@ -42,8 +35,8 @@ public static partial class Edition
             int si; Vec3 pos, n;
             var c = b.Key;
             if (sc.Query(q, out si, out pos, out n) && Math.Abs(sc.Depth(pos) - sc.Depth(b.Key)) < 2 * b.Value)
-                c = pos - n * (0.42 * Math.Min(b.Value, capR));
-            beads.Add(new KeyValuePair<Vec3, double>(c, Math.Min(b.Value, capR)));
+                c = pos - n * (0.32 * b.Value);
+            beads.Add(new KeyValuePair<Vec3, double>(c, b.Value));
         }
         if (!beadsOn) beads.Clear();
         var proj = beads.Select(b => sc.Project(b.Key)).ToList();
@@ -141,10 +134,7 @@ public static partial class Edition
                 }
                 else if (spec > 0.35) continue;                            // glare: clean paper
                 double rim = Math.Pow(1 - Math.Abs(Vec3.Dot(n, sc.F)), 3);
-                // Contact rim: where the film lies just behind the bead surface, the bead meets the skin.
-                double behind = skinDepth(q) - f.Item2;
-                double contact = behind < 0.3 * beads[bi].Value ? 0.55 * (1 - Math.Max(0, behind) / (0.3 * beads[bi].Value)) : 0;
-                tone = Math.Min(1, 0.85 * (1 - lam) + 0.45 * rim + 0.45 * dark + contact);
+                tone = Math.Min(1, 0.85 * (1 - lam) + 0.45 * rim + 0.45 * dark);
                 tone = Math.Max(0, (tone - 0.12) / 0.88);
             }
             else
