@@ -92,8 +92,9 @@ public static partial class Edition
                 var inMs = new MarkSettings { DotMin = ms.DotMin * 1.25, DotMax = ms.DotMax, DotGamma = ms.DotGamma, DotLength = ms.DotLength };
                 p.Layer("inner").AddRange(Stipple(inner, inMs, rng, 0.8));
                 // glass-bare (round 3): no dotted borders at all, inside or out; only the stippled surfaces.
-                if (!ms.Kind.StartsWith("glass-bare"))
-                    p.Layer("innerborders").AddRange(DotLines(Hidden(s, skin, 0, false), ms.Kind == "glass-soft" ? 0.8 : 0.55, 0.06, ms, rng));
+                // Round 4: Mist Open's internal (back) borders softer (0.85 mm); Mist Bare gets a faint hint of them (1.6 mm).
+                double backSp = ms.Kind == "glass-soft" ? 0.8 : ms.Kind == "glass-nosil" ? 0.85 : ms.Kind.StartsWith("glass-bare") ? 1.6 : 0.55;
+                p.Layer("innerborders").AddRange(DotLines(Hidden(s, skin, 0, false), backSp, 0.06, ms, rng));
                 var dskin = Frame(s, v, 0, OverviewFrame, p, e, Clone(baseSt), fit);
                 p.Layer("hatch").AddRange(Stipple(dskin, ms, rng, 1.05));
                 if (ms.Kind == "glass-pure")
@@ -107,7 +108,8 @@ public static partial class Edition
                     OutlineParts(s, dskin, out front, out sil);
                     // Round 3: glass-soft sparser again (0.8 / 0.7 mm).
                     bool bare = ms.Kind.StartsWith("glass-bare");
-                    if (!bare) p.Layer("hatch").AddRange(DotLines(front, ms.Kind == "glass-soft" ? 0.8 : 0.5, 0.08, ms, rng));
+                    // Round 4: Open's front borders softer (0.75 mm); Bare gets just a little border resolution (1.2 mm).
+                    p.Layer("hatch").AddRange(DotLines(front, ms.Kind == "glass-soft" ? 0.8 : ms.Kind == "glass-nosil" ? 0.75 : 1.2, 0.08, ms, rng));
                     if (ms.Kind == "glass-soft") p.Layer("hatch").AddRange(DotLines(sil, 0.7, 0.08, ms, rng));
                     else if (ms.Kind != "glass-bare-noground") p.Layer("background").AddRange(SparseGround(dskin, p, rng));
                 }
@@ -350,15 +352,9 @@ public static partial class Edition
             int i = (int)Math.Round((q.X - x0) / g), j = (int)Math.Round((q.Y - y0) / g);
             return i < 0 || j < 0 || i >= gw || j >= gh ? 1e9 : dist[j * gw + i];
         };
-        return ToneStipple(q =>
-        {
-            double d = D(q);
-            if (d < 0.8) return 0;
-            double edge = Math.Min(Math.Min(q.X - x0, x1 - q.X), Math.Min(q.Y - y0, y1 - q.Y));
-            double fade = Math.Max(0, Math.Min(1, edge / 15));
-            double halo = 0.42 * Math.Exp(-(d - 0.8) / 4.5);
-            return (0.13 + halo) * fade * (0.85 + 0.15 * Noise(q.X / 30, q.Y / 30, 91));
-        }, ms, rng, x0, y0, x1, y1);
+        // Round 4 (Alex: "evenly spotted throughout the quadrant"): an even, sparse dusting everywhere off the
+        // cluster (no halo, no fade), with a 0.6 mm clear gap at the silhouette.
+        return ToneStipple(q => D(q) < 0.6 ? 0 : 0.2, ms, rng, x0, y0, x1, y1);
     }
 
     // ---------- hatched ground ----------
