@@ -36,7 +36,7 @@ public class MarkSettings
     {
         { "stipple", "Sand" }, { "cross", "Engrave" }, { "natural", "Hand" }, { "wild", "Tremor" },
         { "wild-bg", "Tremor Sky" }, { "inkdrift", "Drift" }, { "glass", "Lens" }, { "glass-stipple", "Ghost" },
-        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "glass-soft", "Mist Soft" }, { "glass-nosil", "Mist Open" }, { "glass-bare", "Mist Bare" }, { "glass-bare-noground", "Mist Bare, no ground" }, { "mist-dew-refl-nosil", "Dew Mirror Open" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-soap", "Soap Mist" }, { "mist-dew", "Dew" }, { "mist-dew-refl", "Dew Mirror" }, { "mist-dew-refl-body", "Dew Window" }, { "mist-dew-refl-full", "Dew Room" }, { "mist-refl", "Mist Room" }, { "mist-dew-dense", "Dew Dense" }, { "mist-soap-dense", "Soap Mist Dense" }, { "mist-soap-lines", "Soap Mist Lines" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
+        { "glass-dots", "Frost" }, { "glass-pure", "Mist" }, { "tube-fine", "Wire Fine" }, { "tube", "Wire" }, { "tube-depth", "Wire Depth" }, { "tube-front", "Wire Front" }, { "glass-soft", "Mist Soft" }, { "glass-nosil", "Mist Open" }, { "glass-bare", "Mist Bare" }, { "glass-bare-noground", "Mist Bare, no ground" }, { "mist-dew-refl-nosil", "Dew Mirror Open" }, { "meniscus", "Meniscus" }, { "wet-lattice", "Wet Lattice" }, { "deep-stipple", "Deep Stipple" }, { "depth-hatch", "Depth Hatch" }, { "windows", "Windows" }, { "contour", "Contour" }, { "mist-beads", "Beaded Mist" }, { "mist-soap", "Soap Mist" }, { "mist-dew", "Dew" }, { "mist-dew-refl", "Dew Mirror" }, { "mist-dew-refl-body", "Dew Window" }, { "mist-dew-refl-full", "Dew Room" }, { "mist-refl", "Mist Room" }, { "mist-dew-dense", "Dew Dense" }, { "mist-soap-dense", "Soap Mist Dense" }, { "mist-soap-lines", "Soap Mist Lines" }, { "mist-beads-dense", "Beaded Mist Dense" }, { "wire-beads", "Beaded Wire" }, { "wire-beads-dense", "Beaded Wire Dense" }, { "thread", "Thread" }, { "froth", "Froth" }, { "wave", "Wave" }, { "deep-windows", "Deep Windows" }, { "lattice", "Lattice" },
     };
 
     public static string Resolve(string kindOrName)
@@ -67,6 +67,7 @@ public static partial class Edition
     static Plot MarkOverviewRaw(FoamSolver s, View v, HatchStyle baseSt, EditionSettings e, MarkSettings ms)
     {
         if (IsBeads(ms.Kind)) return BeadOverview(s, v, baseSt, e, ms);
+        if (IsTube(ms.Kind)) return TubeOverview(s, v, e, ms.Kind);
         var p = NewPlot(e);
         var rng = new Random(v.Seed * 7 + 1);
         double wob = ms.Wobble >= 0 ? ms.Wobble
