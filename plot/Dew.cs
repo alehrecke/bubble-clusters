@@ -16,13 +16,31 @@ public static partial class Edition
 {
     // Reflections (Reflect.cs, 2026-10-21): -refl = window + dark floor on the beads; -refl-body = also windows on
     // the bubbles; -refl-full = also the dark floor on the bubbles; mist-refl = the bubbles' reflections, no beads.
+    // Sheet-mm distance from q to the power wall between bead own and its nearest overlapping rival (inf if none).
+    static double WallDistance(V2 q, int own, List<V2> proj, List<double> rad, Func<V2, IEnumerable<int>> near)
+    {
+        var c = proj[own]; double R = rad[own];
+        double p1 = (q - c).X * (q - c).X + (q - c).Y * (q - c).Y - R * R, best = double.MaxValue;
+        foreach (int j in near(q))
+        {
+            if (j == own) continue;
+            var d = q - proj[j]; double l2 = d.X * d.X + d.Y * d.Y;
+            if (l2 >= rad[j] * rad[j]) continue;
+            double p2 = l2 - rad[j] * rad[j];
+            double sep = (proj[j] - c).Length;
+            if (sep < 1e-9) continue;
+            best = Math.Min(best, (p2 - p1) / (2 * sep));
+        }
+        return best;
+    }
+
     static Plot DewOverview(FoamSolver s, View v, Plot p, Scene sc, bool dense, Random rng, string kind = "mist-dew")
     {
         bool beadsOn = kind != "mist-refl", beadRefl = kind.Contains("-refl") || kind == "mist-refl";
         bool bodyWin = kind.EndsWith("-refl-body") || kind.EndsWith("-refl-full") || kind == "mist-refl";
         bool bodyFloor = kind.EndsWith("-refl-full") || kind == "mist-refl";
         var env = new Env(sc);
-        var bs = new BeadSettings { NodeRadius = dense ? 0.2 : 0.15, Decay = dense ? 0.36 : 0.28, BorderChance = kind.EndsWith("-nosil") ? 0.6 : 0.95, NodeClump = dense ? 12 : 8, Overlap = 1.1,
+        var bs = new BeadSettings { NodeRadius = dense ? 0.2 : 0.15, Decay = dense ? 0.36 : 0.28, BorderChance = kind.EndsWith("-nosil") ? 0.6 : 0.95, NodeClump = dense ? 12 : 8, Overlap = 0.72,
                                    Irregular = kind.EndsWith("-nosil") ? 0.8 : 0 };
         List<KeyValuePair<V2, double>> discs; List<KeyValuePair<Vec3, double>> placed;
         Beads(s, sc, bs, rng, true, out discs, out placed);
@@ -77,15 +95,19 @@ public static partial class Edition
         Func<V2, Vec3> unused = null;
         Func<V2, Tuple<int, double, Vec3>> front = q =>
         {
-            int best = -1; double bd = double.MaxValue; Vec3 bn = Vec3.Zero;
+            // Round 3 (Alex: overlap them, but "like they are booleaned and sharing a wall", an extension of the foam):
+            // overlapping beads split by power distance (|q - c|^2 - R^2, the same rule as the foam's films), so two
+            // merged beads meet along a straight shared wall instead of the nearer one covering the farther (coins).
+            int best = -1; double bd = double.MaxValue, p1 = double.MaxValue; Vec3 bn = Vec3.Zero;
             foreach (int i in near(q))
             {
                 var d2 = q - proj[i]; double R = rad[i];
                 double l2 = d2.X * d2.X + d2.Y * d2.Y;
                 if (l2 >= R * R) continue;
+                double pw = l2 - R * R;
+                if (pw >= p1) continue;
                 double a = d2.X / R, b = -d2.Y / R, w = -Math.Sqrt(Math.Max(0, 1 - a * a - b * b));
-                double depth = sc.Depth(beads[i].Key) + w * beads[i].Value;
-                if (depth < bd) { bd = depth; best = i; bn = sc.R * a + sc.U * b + sc.F * w; }
+                p1 = pw; best = i; bd = sc.Depth(beads[i].Key) + w * beads[i].Value; bn = sc.R * a + sc.U * b + sc.F * w;
             }
             if (best < 0) return Tuple.Create(-1, 0.0, Vec3.Zero);
             if (skinDepth(q) < bd - 0.15 * beads[best].Value) return Tuple.Create(-1, 0.0, Vec3.Zero);   // under the film
@@ -141,10 +163,13 @@ public static partial class Edition
                 }
                 else if (spec > 0.35) continue;                            // glare: clean paper
                 double rim = Math.Pow(1 - Math.Abs(Vec3.Dot(n, sc.F)), 3);
+                // Shared wall with an overlapping neighbour (where its power equals ours): a dark seam, like a film.
+                double wall = WallDistance(q, bi, proj, rad, near);
+                double seam = wall < 0.25 ? 0.75 * (1 - wall / 0.25) : 0;
                 // Contact rim: where the film lies just behind the bead surface, the bead meets the skin.
                 double behind = skinDepth(q) - f.Item2;
                 double contact = behind < 0.3 * beads[bi].Value ? 0.55 * (1 - Math.Max(0, behind) / (0.3 * beads[bi].Value)) : 0;
-                tone = Math.Min(1, 0.85 * (1 - lam) + 0.45 * rim + 0.45 * dark + contact);
+                tone = Math.Min(1, Math.Max(0.85 * (1 - lam) + 0.45 * rim + 0.45 * dark + contact, seam));
                 tone = Math.Max(0, (tone - 0.12) / 0.88);
             }
             else
