@@ -18,6 +18,8 @@ public class BeadSettings
     public double Decay = 0.22;          // radius halves over ~Decay x mean radius along a border
     public double BorderChance = 0.75;   // fraction of borders that carry beads
     public int NodeClump = 6;            // extra beads clumped around each node
+    public double Irregular = 0;         // 0..1: patchier (Alex, 2026-10-25: "less density/consistency"): random gaps in
+                                         // each run, node clumps of random size (some none), wider size spread
     public double Overlap = 0.9;         // closest allowed centre distance, as a fraction of r1 + r2 (< 1: beads merge)
 }
 
@@ -265,9 +267,13 @@ public static partial class Edition
                 var along = new double[pts.Count];
                 for (int i = 1; i < pts.Count; i++) along[i] = along[i - 1] + (pts[i] - pts[i - 1]).Length;
                 double half = along[pts.Count - 1] / 2, sPos = r0 * (0.8 + 0.6 * rng.NextDouble());
-                double scale = 0.7 + 0.6 * rng.NextDouble();
+                double scale = (0.7 + 0.6 * rng.NextDouble()) * (1 + bs.Irregular * (rng.NextDouble() - 0.4));
+                // Irregular: some runs stop short, some start further from the node.
+                if (bs.Irregular > 0 && rng.NextDouble() < 0.35 * bs.Irregular) continue;
+                if (bs.Irregular > 0) sPos += r0 * 2.5 * bs.Irregular * rng.NextDouble() * rng.NextDouble();
                 while (sPos < half)
                 {
+                    if (bs.Irregular > 0 && rng.NextDouble() < 0.18 * bs.Irregular) break;
                     double rad = r0 * scale * Math.Pow(0.5, sPos / decay) * (0.75 + 0.5 * rng.NextDouble());
                     if (rad < rMin) break;
                     int i = Array.FindIndex(along, a => a >= sPos); if (i < 1) i = 1;
@@ -282,11 +288,14 @@ public static partial class Edition
         }
         // A small clump at every node.
         foreach (var nd in nodes.Values)
-            for (int k = 0; k < bs.NodeClump; k++)
+        {
+            int clump = bs.Irregular > 0 ? (int)Math.Round(bs.NodeClump * Math.Pow(rng.NextDouble(), 1 + 2 * bs.Irregular) * 1.6) : bs.NodeClump;
+            for (int k = 0; k < clump; k++)
             {
                 double rad = r0 * (0.45 + 0.6 * rng.NextDouble());
                 tryAdd(nd + RandomUnit(rng) * (r0 * (0.6 + 0.9 * rng.NextDouble())), rad);
             }
+        }
 
         // Draw: circle outlines in the view plane, nearer beads hiding farther ones, highlight gap toward the light.
         var light2 = new V2(Vec3.Dot(sc.Light, sc.R), -Vec3.Dot(sc.Light, sc.U)).Normalized();

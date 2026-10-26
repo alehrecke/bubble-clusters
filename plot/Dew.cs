@@ -22,7 +22,8 @@ public static partial class Edition
         bool bodyWin = kind.EndsWith("-refl-body") || kind.EndsWith("-refl-full") || kind == "mist-refl";
         bool bodyFloor = kind.EndsWith("-refl-full") || kind == "mist-refl";
         var env = new Env(sc);
-        var bs = new BeadSettings { NodeRadius = dense ? 0.2 : 0.15, Decay = dense ? 0.36 : 0.28, BorderChance = 0.95, NodeClump = dense ? 12 : 8, Overlap = 0.8 };
+        var bs = new BeadSettings { NodeRadius = dense ? 0.2 : 0.15, Decay = dense ? 0.36 : 0.28, BorderChance = kind.EndsWith("-nosil") ? 0.6 : 0.95, NodeClump = dense ? 12 : 8, Overlap = 0.8,
+                                   Irregular = kind.EndsWith("-nosil") ? 0.8 : 0 };
         List<KeyValuePair<V2, double>> discs; List<KeyValuePair<Vec3, double>> placed;
         Beads(s, sc, bs, rng, true, out discs, out placed);
 

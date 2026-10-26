@@ -354,7 +354,8 @@ public static partial class Edition
         };
         // Round 4 (Alex: "evenly spotted throughout the quadrant"): an even, sparse dusting everywhere off the
         // cluster (no halo, no fade), with a 0.6 mm clear gap at the silhouette.
-        return ToneStipple(q => D(q) < 0.6 ? 0 : 0.2, ms, rng, x0, y0, x1, y1);
+        // Round 5: a bit denser and with slight noise (two scales) so it doesn't read as a printed screen.
+        return ToneStipple(q => D(q) < 0.6 ? 0 : 0.27 * (1 + 0.22 * Noise(q.X / 22, q.Y / 22, 93) + 0.12 * Noise(q.X / 6, q.Y / 6, 97)), ms, rng, x0, y0, x1, y1);
     }
 
     // ---------- hatched ground ----------
