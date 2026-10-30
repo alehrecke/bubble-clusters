@@ -76,7 +76,7 @@ public static partial class Edition
         return c;
     }
 
-    public static void Animate(int seed, int count, double azDeg, double elDeg, int fps, string dir, Action<string> log)
+    public static void Animate(int seed, int count, double azDeg, double elDeg, int fps, string dir, Action<string> log, string style = "lines", int from = -1, int to = -1)
     {
         Directory.CreateDirectory(dir);
         var rng = new Random(seed);
@@ -225,7 +225,7 @@ public static partial class Edition
                 double tt = (rigidFrames + sub / 25.0) / fps;
                 double ge = tt < 1.2 ? Smoothstep(tt / 1.2) : 1;
                 double push = tt < 0.9 ? Math.Sin(Math.PI * tt / 0.9) : 0;
-                double damp = tt > 5 ? Math.Min(4, 0.3 + (tt - 5) * 0.9) : 0.3;
+                double damp = tt > 5 ? Math.Min(1.6, 0.3 + (tt - 5) * 0.35) : 0.3;   // round 3: lighter (the end was slow)
                 foreach (var b in bodies)
                 {
                     var outv = b.X - clusterC; double ol = outv.Length;
@@ -322,8 +322,29 @@ public static partial class Edition
         var e = new EditionSettings { SheetW = 160, SheetH = 120, Seed = seed };
         string fdir = Path.Combine(dir, "frames"), sdir = Path.Combine(dir, "svg");
         Directory.CreateDirectory(fdir); Directory.CreateDirectory(sdir);
-        var weights = new Dictionary<string, double> { { "innerborders", 0.35 }, { "floor", 0.5 } };
-        for (int fi = 0; fi < frames.Count; fi++)
+        bool mist = style == "mist";
+        var weights = mist ? new Dictionary<string, double> { { "inner", 0.6 }, { "innerborders", 0.55 }, { "ground", 0.85 } }
+                           : new Dictionary<string, double> { { "innerborders", 0.35 }, { "floor", 0.5 } };
+        StippleCtx cx = null;
+        if (mist)
+        {
+            // Camera scale is fixed (same fit every frame): measure it once, then build the ranked dot sets.
+            var probe = Scene.Surface(frames[foamFrames - 1].Foam, 0);
+            probe.SetCamera(view.Forward, 0.05 * e.SheetW, 0.05 * e.SheetH, 0.9 * e.SheetW, 0.9 * e.SheetH, fit);
+            cx = new StippleCtx
+            {
+                Skin = RankedField(e.SheetW, e.SheetH, 0.30, 4.5, seed + 1),
+                Inner = RankedField(e.SheetW, e.SheetH, 0.375, 4.5, seed + 2),
+                Ground = RankedField(e.SheetW, e.SheetH, 0.32, 4.5, seed + 3),
+                BodyDots = bodies.Select((b, i) => RankedSurface(b.LV, b.Tris, 0.30 / probe.S, seed * 100 + i)).ToList(),
+                FloorZ = floorZ,
+                KeyLight = (probe.R * -0.72 + probe.U * 0.5 + probe.F * -0.48).Normalized(),
+                ShadowLight = ((probe.R * -0.72 + probe.U * 0.5 + probe.F * -0.48).Normalized() + new Vec3(0, 0, 2.2)).Normalized(),
+            };
+            log(string.Format(ci, "dot sets: skin {0}, inner {1}, ground {2}, stones {3}", cx.Skin.Count, cx.Inner.Count, cx.Ground.Count, cx.BodyDots.Sum(l => l.Count)));
+        }
+        int fiFrom = from >= 0 ? from : 0, fiTo = to >= 0 ? Math.Min(to, frames.Count - 1) : frames.Count - 1;
+        for (int fi = fiFrom; fi <= fiTo; fi++)
         {
             var f = frames[fi];
             FoamMesh fm;
@@ -346,7 +367,15 @@ public static partial class Edition
             sc.SetCamera(view.Forward, 0.05 * p.Width, 0.05 * p.Height, 0.9 * p.Width, 0.9 * p.Height, fit);
             Light(sc);
             sc.Rasterize(e.RasterPxPerMm, p.Width, p.Height);
-            if (f.Foam != null)
+            if (mist)
+            {
+                Lighting.Setup(sc, cx.KeyLight, new LightSettings { AoDirections = 24, ShadowRes = 1000 });
+                int fadeN = fps * 3 / 4;
+                double foamFade = f.Foam != null ? Math.Min(1, Math.Max(0, (foamFrames - 1 - fi) / (double)fadeN)) : 0;
+                double bodyMix = f.Foam != null ? 0 : Math.Min(1, (fi - foamFrames + 1) / (double)(fps / 2));
+                StippleFrame(p, sc, fm, cx, h, f.Foam != null, creases, f.Pos, f.Rot, foamFade, bodyMix, fi);
+            }
+            else if (f.Foam != null)
             {
                 var borders = BorderClean.Clean(fm, h, new BorderCleanSettings { Spacing = h * 0.5, IncludeHost = false });
                 var outer = new List<List<Vec3>>(); var all = new List<List<Vec3>>();
@@ -366,7 +395,7 @@ public static partial class Edition
                 p.Layer("innerborders").AddRange(Hatcher.VisibleRuns(sc, creases, 1.2 / sc.S, 0.6, true));
                 // No floor drawn (round 2): the ground will come from shadows in the final style.
             }
-            if (sc.Tris.Count > 0) foreach (var run2 in Hatcher.VisibleRuns(sc, sc.Silhouettes(), 1.0 / sc.S, 0.6)) p.Layer("outline").Add(Smooth2(run2));
+            if (!mist && sc.Tris.Count > 0) foreach (var run2 in Hatcher.VisibleRuns(sc, sc.Silhouettes(), 1.0 / sc.S, 0.6)) p.Layer("outline").Add(Smooth2(run2));
             SheetIO.Optimize(p);
             SheetIO.WritePng(p, Path.Combine(fdir, string.Format("f{0:0000}.png", fi)), 8, weights);
             SheetIO.WriteSvg(p, Path.Combine(sdir, string.Format("f{0:0000}.svg", fi)), "Bubble animation " + seed + " frame " + fi);
@@ -374,6 +403,21 @@ public static partial class Edition
         }
         var blank = new Plot { Width = e.SheetW, Height = e.SheetH };
         SheetIO.WritePng(blank, Path.Combine(fdir, "blank.png"), 8, weights);
+        Func<string, int> ffr = a =>
+        {
+            var psi = new ProcessStartInfo("ffmpeg", a) { UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
+            var pr = Process.Start(psi); pr.StandardError.ReadToEnd(); pr.WaitForExit(); return pr.ExitCode;
+        };
+        if (from >= 0 || to >= 0)
+        {
+            // A test segment: just these frames, forward, as an MP4.
+            string tmp = Path.Combine(dir, "segment"); if (Directory.Exists(tmp)) Directory.Delete(tmp, true); Directory.CreateDirectory(tmp);
+            for (int fi = fiFrom; fi <= fiTo; fi++) File.Copy(Path.Combine(fdir, string.Format("f{0:0000}.png", fi)), Path.Combine(tmp, string.Format("{0:00000}.png", fi - fiFrom)));
+            string seg = Path.Combine(dir, string.Format("segment_{0}-{1}_{2}.mp4", fiFrom, fiTo, style));
+            int xs = ffr(string.Format(ci, "-y -framerate {0} -i \"{1}\" -c:v libx264 -pix_fmt yuv420p -crf 18 \"{2}\"", fps, Path.Combine(tmp, "%05d.png"), seg));
+            log("segment " + fiFrom + "-" + fiTo + " (foam frames end at " + (foamFrames - 1) + "): " + seg + " exit " + xs);
+            return;
+        }
 
         // ---------- 5. sequence: blank, forward, hold, reverse, blank (loops) ----------
         string qdir = Path.Combine(dir, "seq");
