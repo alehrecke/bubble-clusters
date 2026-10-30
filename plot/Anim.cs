@@ -117,7 +117,7 @@ public static partial class Edition
     }
 
     public static void Animate(int seed, int count, double azDeg, double elDeg, int fps, string dir, Action<string> log, string style = "lines", int from = -1, int to = -1,
-                               string mode = "grow", int streamSteps = 10000)
+                               string mode = "grow", int streamSteps = 10000, double sheetW = 160, double sheetH = 120)
     {
         Directory.CreateDirectory(dir);
         var rng = new Random(seed);
@@ -361,12 +361,14 @@ public static partial class Edition
         var floorCorners = new[] { new Vec3(-1, -1, 0), new Vec3(1, -1, 0), new Vec3(1, 1, 0), new Vec3(-1, 1, 0) }
             .Select(q => drop + new Vec3(q.X * floorHalf, q.Y * floorHalf, 0)).ToList();
         var fit = new List<Vec3>();
-        foreach (var f in frames)
+        // A single frame (from == to) is framed on its own, e.g. one pile frame enlarged to A3.
+        bool single = from >= 0 && from == to;
+        foreach (var f in single ? frames.Skip(Math.Min(from, frames.Count - 1)).Take(1) : frames)
         {
             if (f.IsFoam) { fit.Add(f.BMin); fit.Add(f.BMax); }
             else for (int i = 0; i < bodies.Count; i++) { fit.Add(f.Pos[i] + new Vec3(bodies[i].R, bodies[i].R, bodies[i].R) * 1.3); fit.Add(f.Pos[i] - new Vec3(bodies[i].R, bodies[i].R, bodies[i].R) * 1.3); }
         }
-        var e = new EditionSettings { SheetW = 160, SheetH = 120, Seed = seed };
+        var e = new EditionSettings { SheetW = sheetW, SheetH = sheetH, Seed = seed };
         string fdir = Path.Combine(dir, "frames"), sdir = Path.Combine(dir, "svg");
         Directory.CreateDirectory(fdir); Directory.CreateDirectory(sdir);
         bool mist = style == "mist";

@@ -140,7 +140,7 @@ public static class Program
             int seed = int.Parse(opt("seed", "8801"));
             Edition.Animate(seed, int.Parse(opt("count", "40")), double.Parse(opt("az", "35"), CI), double.Parse(opt("el", "20"), CI),
                             int.Parse(opt("fps", "24")), Path.Combine(root, "anim_" + seed + (opt("mode", "grow") == "grow" ? "" : "_" + opt("mode", "grow")) + (opt("style", "lines") == "lines" ? "" : "_" + opt("style", "lines"))), log,
-                            opt("style", "lines"), int.Parse(opt("from", "-1")), int.Parse(opt("to", "-1")), opt("mode", "grow"), int.Parse(opt("steps", "10000")));
+                            opt("style", "lines"), int.Parse(opt("from", "-1")), int.Parse(opt("to", "-1")), opt("mode", "grow"), int.Parse(opt("steps", "10000")), double.Parse(opt("sheetw", "160"), CI), double.Parse(opt("sheeth", "120"), CI));
             return 0;
         }
         if (cmd == "rafts")
