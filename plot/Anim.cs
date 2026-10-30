@@ -438,7 +438,7 @@ public static partial class Edition
             if (accF >= 1 || i == frames.Count - 1) { fwd.Add(i); accF -= Math.Floor(accF); }
         }
         foreach (int i in fwd) seq.Add(string.Format("f{0:0000}.png", i));
-        for (int i = 0; i < fps; i++) seq.Add(string.Format("f{0:0000}.png", frames.Count - 1));
+        // No hold at the turnaround (Alex): straight from forward into reverse.
         for (int k = fwd.Count - 2; k >= 0; k--) seq.Add(string.Format("f{0:0000}.png", fwd[k]));
         for (int i = 0; i < seq.Count; i++) File.Copy(Path.Combine(fdir, seq[i]), Path.Combine(qdir, string.Format("{0:00000}.png", i)), true);
         Func<string, int> ff = a =>
