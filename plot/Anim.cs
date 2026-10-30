@@ -209,15 +209,29 @@ public static partial class Edition
             for (int j = i + 1; j < bodies.Count; j++)
                 if ((bodies[i].X - bodies[j].X).Length < 2.6 * (bodies[i].R + bodies[j].R))
                     allow[((long)i << 32) | (uint)j] = Math.Max(overlap(bodies[i], bodies[j]), overlap(bodies[j], bodies[i])) + 1e-4;
+        var clusterC = bodies.Aggregate(Vec3.Zero, (a, b) => a + b.X * b.Mass) / bodies.Sum(b => b.Mass);
+        double bowl = 0.06 / diam;
         var jr = new Random(seed * 3 + 1);
         foreach (var b in bodies) b.W = new Vec3(jr.NextDouble() - 0.5, jr.NextDouble() - 0.5, jr.NextDouble() - 0.5) * 0.15;
         int still = 0, rigidFrames = 0;
         double maxR = bodies.Max(b => b.R) * 2.2;
-        while (rigidFrames < fps * 9 && still < fps)
+        while (rigidFrames < fps * 10 && still < fps)
         {
             for (int sub = 0; sub < 25; sub++)
             {
-                foreach (var b in bodies) { b.V = b.V + new Vec3(0, 0, -g * dt); b.V = b.V * (1 - 0.3 * dt); b.W = b.W * (1 - 1.2 * dt); }
+                // Round 2 (Alex: the switch to the drop was "a little sudden and unnatural"): time since the freeze;
+                // gravity eases in over 1.2 s while the cells drift apart (a smooth outward bump over the first 0.9 s),
+                // and damping rises after 5 s so the pile comes to rest.
+                double tt = (rigidFrames + sub / 25.0) / fps;
+                double ge = tt < 1.2 ? Smoothstep(tt / 1.2) : 1;
+                double push = tt < 0.9 ? Math.Sin(Math.PI * tt / 0.9) : 0;
+                double damp = tt > 5 ? Math.Min(4, 0.3 + (tt - 5) * 0.9) : 0.3;
+                foreach (var b in bodies)
+                {
+                    var outv = b.X - clusterC; double ol = outv.Length;
+                    var acc = new Vec3(0, 0, -g * ge) + (ol > 1e-9 ? outv * (0.9 * gap * push / Math.Max(ol, 0.3 * diam)) : Vec3.Zero);
+                    b.V = b.V + acc * dt; b.V = b.V * (1 - damp * dt); b.W = b.W * (1 - (1 + 3 * damp) * dt);
+                }
                 // Contacts: (body index A, body index B or -1 for the floor, point, normal pushing A, depth).
                 var contacts = new List<Tuple<int, int, Vec3, Vec3, double>>();
                 for (int i = 0; i < bodies.Count; i++)
@@ -226,7 +240,9 @@ public static partial class Edition
                     foreach (var sp in A.Samples)
                     {
                         var pw = A.X + A.Q.Rotate(sp);
-                        if (pw.Z < floorZ) contacts.Add(Tuple.Create(i, -1, pw, new Vec3(0, 0, 1), floorZ - pw.Z));
+                        // The (undrawn) floor is a very shallow bowl, so stones roll back toward the middle and stay in frame.
+                        double dx = pw.X - drop.X, dy = pw.Y - drop.Y, fz = floorZ + bowl * (dx * dx + dy * dy);
+                        if (pw.Z < fz) contacts.Add(Tuple.Create(i, -1, pw, new Vec3(-2 * bowl * dx, -2 * bowl * dy, 1).Normalized(), fz - pw.Z));
                     }
                     for (int j = 0; j < bodies.Count; j++)
                     {
@@ -297,7 +313,7 @@ public static partial class Edition
         double floorHalf = 1.25 * diam;
         var floorCorners = new[] { new Vec3(-1, -1, 0), new Vec3(1, -1, 0), new Vec3(1, 1, 0), new Vec3(-1, 1, 0) }
             .Select(q => drop + new Vec3(q.X * floorHalf, q.Y * floorHalf, 0)).ToList();
-        var fit = new List<Vec3>(floorCorners);
+        var fit = new List<Vec3>();
         foreach (var f in frames)
         {
             if (f.Foam != null) { fit.Add(new Vec3(f.Foam.V.Min(p => p.X), f.Foam.V.Min(p => p.Y), f.Foam.V.Min(p => p.Z))); fit.Add(new Vec3(f.Foam.V.Max(p => p.X), f.Foam.V.Max(p => p.Y), f.Foam.V.Max(p => p.Z))); }
@@ -348,15 +364,7 @@ public static partial class Edition
             {
                 p.Layer("outline").AddRange(Hatcher.VisibleRuns(sc, creases, 4 / (sc.S * sc.Res)));
                 p.Layer("innerborders").AddRange(Hatcher.VisibleRuns(sc, creases, 1.2 / sc.S, 0.6, true));
-                // The floor draws itself in over the first second of the drop.
-                double grow = Math.Min(1, f.FloorSteps / (double)fps);
-                var edges = new List<List<Vec3>>();
-                for (int k = 0; k < 4; k++)
-                {
-                    var a = floorCorners[k]; var bq = floorCorners[(k + 1) % 4];
-                    edges.Add(new List<Vec3> { a, a + (bq - a) * grow });
-                }
-                p.Layer("floor").AddRange(Hatcher.VisibleRuns(sc, edges, 4 / (sc.S * sc.Res)));
+                // No floor drawn (round 2): the ground will come from shadows in the final style.
             }
             if (sc.Tris.Count > 0) foreach (var run2 in Hatcher.VisibleRuns(sc, sc.Silhouettes(), 1.0 / sc.S, 0.6)) p.Layer("outline").Add(Smooth2(run2));
             SheetIO.Optimize(p);
@@ -387,6 +395,8 @@ public static partial class Edition
         int x2 = ff(string.Format(ci, "-y -framerate {0} -i \"{1}\" -vf \"fps=12,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse\" -loop 0 \"{2}\"", fps, Path.Combine(qdir, "%05d.png"), gif));
         log(string.Format(ci, "sequence {0} frames ({1:F1} s); mp4 exit {2}, gif exit {3}", seq.Count, seq.Count / (double)fps, x1, x2));
     }
+
+    static double Smoothstep(double x) { x = Math.Max(0, Math.Min(1, x)); return x * x * (3 - 2 * x); }
 
     static int ContactsOf(List<Tuple<int, int, Vec3, Vec3, double>> cs, int a, int b)
     {
