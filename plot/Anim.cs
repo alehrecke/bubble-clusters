@@ -425,9 +425,21 @@ public static partial class Edition
         Directory.CreateDirectory(qdir);
         var seq = new List<string>();
         for (int i = 0; i < fps / 2; i++) seq.Add("blank.png");
-        for (int i = 0; i < frames.Count; i++) seq.Add(string.Format("f{0:0000}.png", i));
+        // Retimed (Alex: seconds 20-30 had "a lot that is pretty minor while moving"): the drop plays at normal speed
+        // for its first 3 s, then speeds up smoothly to 3x by 5 s, so the slow settling passes quickly.
+        var fwd = new List<int>();
+        for (int i = 0; i < foamFrames; i++) fwd.Add(i);
+        double accF = 0;
+        for (int i = foamFrames; i < frames.Count; i++)
+        {
+            double t = (i - foamFrames) / (double)fps;
+            double speed = 1 + 2 * Smoothstep((t - 3) / 2);
+            accF += 1 / speed;
+            if (accF >= 1 || i == frames.Count - 1) { fwd.Add(i); accF -= Math.Floor(accF); }
+        }
+        foreach (int i in fwd) seq.Add(string.Format("f{0:0000}.png", i));
         for (int i = 0; i < fps; i++) seq.Add(string.Format("f{0:0000}.png", frames.Count - 1));
-        for (int i = frames.Count - 2; i >= 0; i--) seq.Add(string.Format("f{0:0000}.png", i));
+        for (int k = fwd.Count - 2; k >= 0; k--) seq.Add(string.Format("f{0:0000}.png", fwd[k]));
         for (int i = 0; i < seq.Count; i++) File.Copy(Path.Combine(fdir, seq[i]), Path.Combine(qdir, string.Format("{0:00000}.png", i)), true);
         Func<string, int> ff = a =>
         {
