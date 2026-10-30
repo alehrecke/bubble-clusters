@@ -47,21 +47,89 @@ public static partial class Edition
                                              Math.Max(1e-12, sxx + syy - Math.Sqrt((sxx - syy) * (sxx - syy) + 4 * sxy * sxy))));
         double roll = aspect > 1.15 ? Math.PI / 2 - phi : 0;
         double cr = Math.Cos(roll), sr = Math.Sin(roll);
-        double rMain = mainVerts.Max(i => (m.V[i] - c).Length), D = 2.2 * rMain;
-        for (int i = 0; i < m.V.Count; i++)
+        double rMain = mainVerts.Max(i => (m.V[i] - c).Length);
+        // Camera coordinates after the roll.
+        Func<Vec3, Vec3> toCam = q => { var d = q - c; double x = Vec3.Dot(d, R), y = Vec3.Dot(d, U), z = Vec3.Dot(d, F); return new Vec3(cr * x - sr * y, sr * x + cr * y, z); };
+        var cam = m.V.Select(toCam).ToList();
+
+        // Round 2: pull the satellites in (rigid moves of pieces that touch nothing: the physics is unchanged), to a
+        // ring just outside the main body on screen, each at its own depth, so nothing has to be cropped.
+        var rng = new Random(seed * 41 + 3);
+        var vertPiece = new int[m.V.Count];
+        foreach (var t in m.T)
         {
-            var d = m.V[i] - c;
-            double x = Vec3.Dot(d, R), y = Vec3.Dot(d, U), z = Vec3.Dot(d, F);
-            double x2 = cr * x - sr * y, y2 = sr * x + cr * y;           // rotate about F
-            if (lens) { double k = D / Math.Max(0.25 * D, D + z); x2 *= k; y2 *= k; }
-            m.V[i] = c + R * x2 + U * y2 + F * z;
+            int k = t.Neg > 0 ? t.Neg : t.Pos;
+            if (k > 0 && k < piece.Length) { vertPiece[t.A] = piece[k]; vertPiece[t.B] = piece[k]; vertPiece[t.C] = piece[k]; }
+        }
+        // Round 3: an ellipse around the main body (its screen half-extents), not a circle of its longest reach: on a
+        // long chain the circle sent satellites far up and down the tile and shrank everything again.
+        double ex = mainVerts.Max(i => Math.Abs(cam[i].X)), ey = mainVerts.Max(i => Math.Abs(cam[i].Y));
+        var placed = new List<KeyValuePair<Vec3, double>>();      // (centre, radius) in camera coords
+        foreach (var grp in Enumerable.Range(0, m.V.Count).Where(i => vertPiece[i] != 0 && vertPiece[i] != main).GroupBy(i => vertPiece[i]))
+        {
+            var idx = grp.ToList();
+            var pc = idx.Aggregate(Vec3.Zero, (a, i) => a + cam[i]) / idx.Count;
+            double pr = idx.Max(i => (cam[i] - pc).Length);
+            double ang = Math.Atan2(pc.Y, pc.X);
+            Vec3 target = pc;
+            for (int tries = 0; tries < 40; tries++)
+            {
+                double f = 0.95 + 0.4 * rng.NextDouble();
+                double z = (rng.NextDouble() * 2 - 1) * 0.8 * rMain;
+                var cand = new Vec3(Math.Cos(ang) * (ex * f + pr * 1.3), Math.Sin(ang) * (ey * f + pr * 1.3), z);
+                bool ok = placed.All(q => (q.Key - cand).Length > q.Value + pr + 0.15 * rMain);
+                // Clear of the main body in 3D too.
+                ok = ok && mainVerts.All(i => (cam[i] - cand).Length > pr * 1.1);
+                if (ok) { target = cand; break; }
+                ang += 0.45;
+            }
+            placed.Add(new KeyValuePair<Vec3, double>(target, pr));
+            var shift = target - pc;
+            foreach (int i in idx) cam[i] = cam[i] + shift;
         }
 
+        // Lens: a perspective warp. Strong for long shapes seen side-on, gentle for the rest (an elongated body pointing
+        // at the camera turned into one giant near bubble with a strong lens: 7531 in round 1).
+        double lx = 0, ly = 0, lz = 0, lxx = 0, lyy = 0, lzz = 0, lxy = 0, lxz = 0, lyz = 0;
+        foreach (int i in mainVerts) { var q = cam[i]; lxx += q.X * q.X; lyy += q.Y * q.Y; lzz += q.Z * q.Z; lxy += q.X * q.Y; lxz += q.X * q.Z; lyz += q.Y * q.Z; }
+        double[] ax = { 1, 0.2, 0.1 };
+        for (int it = 0; it < 50; it++)
+        {
+            double[] nx = { lxx * ax[0] + lxy * ax[1] + lxz * ax[2], lxy * ax[0] + lyy * ax[1] + lyz * ax[2], lxz * ax[0] + lyz * ax[1] + lzz * ax[2] };
+            double l = Math.Sqrt(nx.Sum(z => z * z)); ax = nx.Select(z => z / l).ToArray();
+        }
+        bool sideOn = Math.Abs(ax[2]) < 0.4;
+        double D = (lens && sideOn ? 2.6 : 4.5) * rMain;
+        // Satellites are scaled as a whole (by the lens factor at their centre) so they stay round; the main body
+        // gets the full warp.
+        var pieceK = new Dictionary<int, KeyValuePair<Vec3, double>>();
+        foreach (var grp in Enumerable.Range(0, m.V.Count).Where(i => vertPiece[i] != 0 && vertPiece[i] != main).GroupBy(i => vertPiece[i]))
+        {
+            var pc = grp.Aggregate(Vec3.Zero, (a, i) => a + cam[i]) / grp.Count();
+            pieceK[grp.Key] = new KeyValuePair<Vec3, double>(pc, D / Math.Max(0.3 * D, D + pc.Z));
+        }
+        for (int i = 0; i < m.V.Count; i++)
+        {
+            var q = cam[i];
+            KeyValuePair<Vec3, double> pk;
+            if (vertPiece[i] != 0 && vertPiece[i] != main && pieceK.TryGetValue(vertPiece[i], out pk))
+            {
+                var pc = pk.Key; double k = pk.Value;
+                var r2 = q - pc;
+                m.V[i] = c + R * (pc.X * k + r2.X * k) + U * (pc.Y * k + r2.Y * k) + F * q.Z;
+            }
+            else
+            {
+                double k = D / Math.Max(0.3 * D, D + q.Z);
+                m.V[i] = c + R * (q.X * k) + U * (q.Y * k) + F * q.Z;
+            }
+        }
         var p = new Plot { Width = e.SheetW, Height = e.SheetH };
         try
         {
-            FrameOverride = new[] { 0.05, 0.045, 0.90, 0.87 };
-            FitOverride = mainVerts.Select(i => m.V[i]).ToList();
+            // Fit to everything (nothing cropped) now that the satellites sit close.
+            FrameOverride = new[] { 0.07, 0.06, 0.86, 0.82 };
+            FitOverride = m.V.ToList();
             p = MarkOverview(s, view, hs, e, ms);
         }
         finally { FrameOverride = null; FitOverride = null; }
