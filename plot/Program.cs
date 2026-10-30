@@ -97,6 +97,41 @@ public static class Program
             return 0;
         }
 
+        if (cmd == "reframe")
+        {
+            // Re-render saved gallery clusters with the closer composition (Reframe.cs): reframe --dir <gallery dir>
+            // [--pages 4,8] [--marks glass-pure] [--lens chain,branch,ring]
+            string gd = Path.GetFullPath(opt("dir", ""));
+            var specs = File.ReadAllLines(Path.Combine(gd, "clusters.txt")).Where(l => l.Contains(":")).ToList();
+            var pages = opt("pages", "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToList();
+            if (pages.Count == 0) pages = Enumerable.Range(1, (specs.Count + 3) / 4).ToList();
+            string kind = MarkSettings.Resolve(opt("marks", "glass-pure"));
+            var lensShapes = opt("lens", "chain,branch,ring").Split(',');
+            foreach (int pg in pages)
+            {
+                var tiles = new List<Plot>();
+                var seeds = new List<int>();
+                foreach (var line in specs.Skip((pg - 1) * 4).Take(4))
+                {
+                    int seed = int.Parse(line.Split(':')[0], CI);
+                    string shape = line.Split(':')[1].Split(',')[0].Trim();
+                    var ge = settings(seed); ge.SheetW = A3W / 2; ge.SheetH = A3H / 2;
+                    var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
+                    bool lens = lensShapes.Contains(shape);
+                    var ms = new MarkSettings { Kind = kind, Tag = (shape != "ball" ? shape.ToUpperInvariant() + "  " : "") + "REFRAMED" + (lens ? " LENS" : "") };
+                    tiles.Add(Edition.ReframedTile(Path.Combine(gd, "cluster_" + seed + ".obj"), shape, seed, hs, ge, ms, lens));
+                    seeds.Add(seed);
+                    log("reframed " + seed + " (" + shape + (lens ? ", lens" : "") + ")");
+                }
+                var pe = settings(seeds[0]); pe.SheetW = A3W; pe.SheetH = A3H;
+                var page = Edition.Tile(tiles, A3W, A3H, 2, 2);
+                string pname = string.Format(CI, "a3_reframed_{0}_p{1:00}_seeds{2}-{3}", kind, pg, seeds.First(), seeds.Last());
+                var pi = Edition.Write(page, gd, pname, "Bubble clusters reframed, page " + pg, pe);
+                log("page " + pg + ": " + pi["strokes"] + " strokes, ~" + pi["estMinutes"] + " min");
+            }
+            return 0;
+        }
+
         if (cmd == "rafts")
         {
             // Bubble rafts floating on a water plane (Raft.cs), one per A3 quadrant: rafts --start N [--n 8] [--marks glass-pure]

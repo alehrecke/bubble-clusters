@@ -223,6 +223,9 @@ public static partial class Edition
     static Scene Frame(FoamSolver s, View v, int bubble, double[] fr, Plot p, EditionSettings e, HatchStyle st, IEnumerable<Vec3> fit = null)
     {
         var sc = Scene.Surface(s.Mesh, bubble);
+        // Reframe (Reframe.cs) can override the overview frame and what the camera fits to.
+        if (FrameOverride != null && fr == OverviewFrame) fr = FrameOverride;
+        if (FitOverride != null) fit = FitOverride;
         sc.SetCamera(v.Forward, fr[0] * p.Width, fr[1] * p.Height, fr[2] * p.Width, fr[3] * p.Height, fit);
         Light(sc);
         sc.Rasterize(e.RasterPxPerMm, p.Width, p.Height);
