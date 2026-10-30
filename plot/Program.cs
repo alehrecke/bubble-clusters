@@ -134,6 +134,14 @@ public static class Program
             return 0;
         }
 
+        if (cmd == "anim")
+        {
+            // Foam forming, then cells dropped as rigid stones; forward + reverse loop as MP4 + GIF (Anim.cs).
+            int seed = int.Parse(opt("seed", "8801"));
+            Edition.Animate(seed, int.Parse(opt("count", "24")), double.Parse(opt("az", "35"), CI), double.Parse(opt("el", "20"), CI),
+                            int.Parse(opt("fps", "24")), Path.Combine(root, "anim_" + seed), log);
+            return 0;
+        }
         if (cmd == "rafts")
         {
             // Bubble rafts floating on a water plane (Raft.cs), one per A3 quadrant: rafts --start N [--n 8] [--marks glass-pure]
