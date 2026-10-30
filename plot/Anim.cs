@@ -52,7 +52,10 @@ public static partial class Edition
 
     class AnimFrame
     {
-        public FoamMesh Foam;                              // foam phase (null in the rigid phase)
+        public FoamMesh Foam;                              // (unused when cached to disk)
+        public string FoamFile;                            // foam phase: mesh snapshot on disk (null in the rigid phase)
+        public Vec3 BMin, BMax;                            // foam phase: bounds used for the camera fit
+        public bool IsFoam { get { return FoamFile != null || Foam != null; } }
         public List<Vec3> Pos; public List<Quat> Rot;     // rigid phase
         public int FloorSteps;                             // floor draw-in progress (0..)
     }
@@ -69,6 +72,43 @@ public static partial class Edition
         return d;
     }
 
+    // Foam frames go to disk (long stream runs: ~1000 frames of 80k triangles would not fit in memory).
+    static string animCache; static int animCacheN;
+    static AnimFrame Capture(FoamMesh m, Func<int, bool> fitBubble = null)
+    {
+        string f = Path.Combine(animCache, string.Format("m{0:00000}.bin", animCacheN++));
+        using (var bw = new BinaryWriter(File.Create(f)))
+        {
+            bw.Write(m.BubbleCount); bw.Write(m.V.Count); bw.Write(m.T.Count);
+            foreach (var v in m.V) { bw.Write((float)v.X); bw.Write((float)v.Y); bw.Write((float)v.Z); }
+            foreach (var t in m.T) { bw.Write(t.A); bw.Write(t.B); bw.Write(t.C); bw.Write((short)t.Neg); bw.Write((short)t.Pos); }
+        }
+        var fr = new AnimFrame { FoamFile = f };
+        var mn = new Vec3(double.MaxValue, double.MaxValue, double.MaxValue); var mx = mn * -1;
+        bool any = false;
+        foreach (var t in m.T)
+        {
+            if (fitBubble != null && !(t.Neg > 0 && fitBubble(t.Neg)) && !(t.Pos > 0 && fitBubble(t.Pos))) continue;
+            foreach (int vi in new[] { t.A, t.B, t.C }) { mn = Vec3.Min(mn, m.V[vi]); mx = Vec3.Max(mx, m.V[vi]); any = true; }
+        }
+        if (!any) foreach (var v in m.V) { mn = Vec3.Min(mn, v); mx = Vec3.Max(mx, v); }
+        fr.BMin = mn; fr.BMax = mx;
+        return fr;
+    }
+
+    static FoamMesh LoadMesh(AnimFrame f)
+    {
+        if (f.Foam != null) return f.Foam;
+        var m = new FoamMesh();
+        using (var br = new BinaryReader(File.OpenRead(f.FoamFile)))
+        {
+            m.BubbleCount = br.ReadInt32(); int nv = br.ReadInt32(), nt = br.ReadInt32();
+            for (int i = 0; i < nv; i++) m.V.Add(new Vec3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle()));
+            for (int i = 0; i < nt; i++) m.T.Add(new FoamTri(br.ReadInt32(), br.ReadInt32(), br.ReadInt32(), br.ReadInt16(), br.ReadInt16()));
+        }
+        return m;
+    }
+
     static FoamMesh CopyMesh(FoamMesh m)
     {
         var c = new FoamMesh { BubbleCount = m.BubbleCount };
@@ -76,11 +116,19 @@ public static partial class Edition
         return c;
     }
 
-    public static void Animate(int seed, int count, double azDeg, double elDeg, int fps, string dir, Action<string> log, string style = "lines", int from = -1, int to = -1)
+    public static void Animate(int seed, int count, double azDeg, double elDeg, int fps, string dir, Action<string> log, string style = "lines", int from = -1, int to = -1,
+                               string mode = "grow", int streamSteps = 10000)
     {
         Directory.CreateDirectory(dir);
         var rng = new Random(seed);
         var ci = CultureInfo.InvariantCulture;
+        animCache = Path.Combine(dir, "cache"); animCacheN = 0;
+        if (Directory.Exists(animCache)) Directory.Delete(animCache, true);
+        Directory.CreateDirectory(animCache);
+        FoamSolver s; double h; var frames = new List<AnimFrame>(); var sw = Stopwatch.StartNew();
+        if (mode == "stream") s = StreamFoam(seed, rng, frames, out h, streamSteps, log, sw);
+        else
+        {
 
         // ---------- 1. foam: blow the bubbles in one by one, outward from the middle ----------
         var r = new List<double>(); var c = new List<Vec3>();
@@ -96,25 +144,23 @@ public static partial class Edition
         var order = Enumerable.Range(0, count).OrderBy(i => (c[i] - mid0).Length).ToList();
         c = order.Select(i => c[i]).ToList(); r = order.Select(i => r[i]).ToList();
         double area = r.Sum(x => 4 * Math.PI * x * x);
-        double h = Math.Max(r.Min() / 5, Math.Sqrt(area / (0.433 * 50000)));
+        h = Math.Max(r.Min() / 5, Math.Sqrt(area / (0.433 * 50000)));
         string info;
         double start = Math.Max(0.5 * r[0], 2.5 * h);
-        var s = new FoamSolver(MobiusMesher.Build(new List<Vec3> { c[0] }, new List<double> { start }, h, out info),
+        s = new FoamSolver(MobiusMesher.Build(new List<Vec3> { c[0] }, new List<double> { start }, h, out info),
                                new SolverSettings { Rearrange = true, EdgeLength = h });
         s.SetTargetRadii(new List<double> { start });
         var desired = new List<double> { r[0] };
         s.SetDesiredRadii(desired);
-        var frames = new List<AnimFrame>();
         int every = 18, perAdd = 108;
         Action<int> run = steps =>
         {
             for (int i = 0; i < steps; i++)
             {
                 s.Step(); s.RearrangeLog.Clear();
-                if (s.Steps % every == 0) frames.Add(new AnimFrame { Foam = CopyMesh(s.Mesh) });
+                if (s.Steps % every == 0) frames.Add(Capture(s.Mesh));
             }
         };
-        var sw = Stopwatch.StartNew();
         run(perAdd);
         for (int i = 1; i < count; i++)
         {
@@ -123,7 +169,7 @@ public static partial class Edition
             desired.Add(r[i]);
             // The new bubble's id is BubbleCount + 1 once the add lands; resize after it does.
             int before = s.Mesh.BubbleCount, guard = 0;
-            while (s.Mesh.BubbleCount == before && guard++ < 400) { s.Step(); s.RearrangeLog.Clear(); if (s.Steps % every == 0) frames.Add(new AnimFrame { Foam = CopyMesh(s.Mesh) }); }
+            while (s.Mesh.BubbleCount == before && guard++ < 400) { s.Step(); s.RearrangeLog.Clear(); if (s.Steps % every == 0) frames.Add(Capture(s.Mesh)); }
             var dr = new List<double>();
             for (int k = 1; k <= s.Mesh.BubbleCount; k++) dr.Add(k - 1 < desired.Count ? desired[k - 1] : r0);
             s.SetDesiredRadii(dr);
@@ -132,7 +178,8 @@ public static partial class Edition
         }
         run(every * 72);                                     // relax (3 s at 24 fps)
         Settle(s, log);
-        frames.Add(new AnimFrame { Foam = CopyMesh(s.Mesh) });
+        frames.Add(Capture(s.Mesh));
+        }
         int foamFrames = frames.Count;
 
         // ---------- 2. freeze the cells into rigid bodies ----------
@@ -316,7 +363,7 @@ public static partial class Edition
         var fit = new List<Vec3>();
         foreach (var f in frames)
         {
-            if (f.Foam != null) { fit.Add(new Vec3(f.Foam.V.Min(p => p.X), f.Foam.V.Min(p => p.Y), f.Foam.V.Min(p => p.Z))); fit.Add(new Vec3(f.Foam.V.Max(p => p.X), f.Foam.V.Max(p => p.Y), f.Foam.V.Max(p => p.Z))); }
+            if (f.IsFoam) { fit.Add(f.BMin); fit.Add(f.BMax); }
             else for (int i = 0; i < bodies.Count; i++) { fit.Add(f.Pos[i] + new Vec3(bodies[i].R, bodies[i].R, bodies[i].R) * 1.3); fit.Add(f.Pos[i] - new Vec3(bodies[i].R, bodies[i].R, bodies[i].R) * 1.3); }
         }
         var e = new EditionSettings { SheetW = 160, SheetH = 120, Seed = seed };
@@ -329,7 +376,7 @@ public static partial class Edition
         if (mist)
         {
             // Camera scale is fixed (same fit every frame): measure it once, then build the ranked dot sets.
-            var probe = Scene.Surface(frames[foamFrames - 1].Foam, 0);
+            var probe = Scene.Surface(LoadMesh(frames[foamFrames - 1]), 0);
             probe.SetCamera(view.Forward, 0.05 * e.SheetW, 0.05 * e.SheetH, 0.9 * e.SheetW, 0.9 * e.SheetH, fit);
             cx = new StippleCtx
             {
@@ -349,7 +396,7 @@ public static partial class Edition
             var f = frames[fi];
             FoamMesh fm;
             List<List<Vec3>> creases = null;
-            if (f.Foam != null) fm = f.Foam;
+            if (f.IsFoam) fm = LoadMesh(f);
             else
             {
                 fm = new FoamMesh { BubbleCount = bodies.Count };
@@ -371,11 +418,11 @@ public static partial class Edition
             {
                 Lighting.Setup(sc, cx.KeyLight, new LightSettings { AoDirections = 24, ShadowRes = 1000 });
                 int fadeN = fps * 3 / 4;
-                double foamFade = f.Foam != null ? Math.Min(1, Math.Max(0, (foamFrames - 1 - fi) / (double)fadeN)) : 0;
-                double bodyMix = f.Foam != null ? 0 : Math.Min(1, (fi - foamFrames + 1) / (double)(fps / 2));
-                StippleFrame(p, sc, fm, cx, h, f.Foam != null, creases, f.Pos, f.Rot, foamFade, bodyMix, fi);
+                double foamFade = f.IsFoam ? Math.Min(1, Math.Max(0, (foamFrames - 1 - fi) / (double)fadeN)) : 0;
+                double bodyMix = f.IsFoam ? 0 : Math.Min(1, (fi - foamFrames + 1) / (double)(fps / 2));
+                StippleFrame(p, sc, fm, cx, h, f.IsFoam, creases, f.Pos, f.Rot, foamFade, bodyMix, fi);
             }
-            else if (f.Foam != null)
+            else if (f.IsFoam)
             {
                 var borders = BorderClean.Clean(fm, h, new BorderCleanSettings { Spacing = h * 0.5, IncludeHost = false });
                 var outer = new List<List<Vec3>>(); var all = new List<List<Vec3>>();
@@ -396,6 +443,11 @@ public static partial class Edition
                 // No floor drawn (round 2): the ground will come from shadows in the final style.
             }
             if (!mist && sc.Tris.Count > 0) foreach (var run2 in Hatcher.VisibleRuns(sc, sc.Silhouettes(), 1.0 / sc.S, 0.6)) p.Layer("outline").Add(Smooth2(run2));
+            foreach (var ln in p.LayerOrder.ToList())
+            {
+                var clipped = ClipRect(p.Layers[ln], 0.5, 0.5, p.Width - 0.5, p.Height - 0.5);
+                p.Layers[ln].Clear(); p.Layers[ln].AddRange(clipped);
+            }
             SheetIO.Optimize(p);
             SheetIO.WritePng(p, Path.Combine(fdir, string.Format("f{0:0000}.png", fi)), 8, weights);
             SheetIO.WriteSvg(p, Path.Combine(sdir, string.Format("f{0:0000}.svg", fi)), "Bubble animation " + seed + " frame " + fi);
@@ -450,6 +502,7 @@ public static partial class Edition
         int x1 = ff(string.Format(ci, "-y -framerate {0} -i \"{1}\" -c:v libx264 -pix_fmt yuv420p -crf 18 \"{2}\"", fps, Path.Combine(qdir, "%05d.png"), mp4));
         int x2 = ff(string.Format(ci, "-y -framerate {0} -i \"{1}\" -vf \"fps=12,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse\" -loop 0 \"{2}\"", fps, Path.Combine(qdir, "%05d.png"), gif));
         log(string.Format(ci, "sequence {0} frames ({1:F1} s); mp4 exit {2}, gif exit {3}", seq.Count, seq.Count / (double)fps, x1, x2));
+        try { Directory.Delete(animCache, true); } catch { }
     }
 
     static double Smoothstep(double x) { x = Math.Max(0, Math.Min(1, x)); return x * x * (3 - 2 * x); }
