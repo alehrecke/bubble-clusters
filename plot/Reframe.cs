@@ -71,18 +71,22 @@ public static partial class Edition
             var pc = idx.Aggregate(Vec3.Zero, (a, i) => a + cam[i]) / idx.Count;
             double pr = idx.Max(i => (cam[i] - pc).Length);
             double ang = Math.Atan2(pc.Y, pc.X);
-            Vec3 target = pc;
-            for (int tries = 0; tries < 40; tries++)
+            Vec3 target = pc, last = pc;
+            bool found = false;
+            for (int tries = 0; tries < 60; tries++)
             {
-                double f = 0.95 + 0.4 * rng.NextDouble();
+                double f = (0.95 + 0.4 * rng.NextDouble()) * (1 + 0.02 * tries);   // widen slowly if crowded
                 double z = (rng.NextDouble() * 2 - 1) * 0.8 * rMain;
                 var cand = new Vec3(Math.Cos(ang) * (ex * f + pr * 1.3), Math.Sin(ang) * (ey * f + pr * 1.3), z);
                 bool ok = placed.All(q => (q.Key - cand).Length > q.Value + pr + 0.15 * rMain);
                 // Clear of the main body in 3D too.
                 ok = ok && mainVerts.All(i => (cam[i] - cand).Length > pr * 1.1);
-                if (ok) { target = cand; break; }
+                last = cand;
+                if (ok) { target = cand; found = true; break; }
                 ang += 0.45;
             }
+            // No clear spot: still bring it in (last try, just outside the ring) rather than leave it far out (7516).
+            if (!found) target = last;
             placed.Add(new KeyValuePair<Vec3, double>(target, pr));
             var shift = target - pc;
             foreach (int i in idx) cam[i] = cam[i] + shift;

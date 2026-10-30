@@ -118,14 +118,16 @@ public static class Program
                     var ge = settings(seed); ge.SheetW = A3W / 2; ge.SheetH = A3H / 2;
                     var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
                     bool lens = lensShapes.Contains(shape);
-                    var ms = new MarkSettings { Kind = kind, Tag = (shape != "ball" ? shape.ToUpperInvariant() + "  " : "") + "REFRAMED" + (lens ? " LENS" : "") };
+                    var cells = System.Text.RegularExpressions.Regex.Match(line, @"(\d+) bubbles").Groups[1].Value;
+                    var ms = new MarkSettings { Kind = kind, Tag = (shape != "ball" ? shape.ToUpperInvariant() + "  " : "") + cells + " CELLS" };
                     tiles.Add(Edition.ReframedTile(Path.Combine(gd, "cluster_" + seed + ".obj"), shape, seed, hs, ge, ms, lens));
                     seeds.Add(seed);
                     log("reframed " + seed + " (" + shape + (lens ? ", lens" : "") + ")");
                 }
                 var pe = settings(seeds[0]); pe.SheetW = A3W; pe.SheetH = A3H;
                 var page = Edition.Tile(tiles, A3W, A3H, 2, 2);
-                string pname = string.Format(CI, "a3_reframed_{0}_p{1:00}_seeds{2}-{3}", kind, pg, seeds.First(), seeds.Last());
+                // Same names as the gallery pages: the reframed composition is the default since 2026-10-29.
+                string pname = string.Format(CI, "a3_gallery_{0}_p{1:00}_seeds{2}-{3}", kind, pg, seeds.First(), seeds.Last());
                 var pi = Edition.Write(page, gd, pname, "Bubble clusters reframed, page " + pg, pe);
                 log("page " + pg + ": " + pi["strokes"] + " strokes, ~" + pi["estMinutes"] + " min");
             }
@@ -208,7 +210,9 @@ public static class Program
                 ge.SheetW = A3W / 2; ge.SheetH = A3H / 2;
                 var hs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
                 var ms = new MarkSettings { Kind = kind, Tag = (ge.Shape != "ball" ? ge.Shape.ToUpperInvariant() + "  " : "") + ge.Count + " CELLS" + (ge.Satellites > 0 ? " +" + ge.Satellites + " SAT" : "") + (ge.Variant > 0 ? "  V" + ge.Variant : "") };
-                tiles.Add(Edition.MarkOverview(gs, Edition.ShapeView(gs, ge.Shape, seed), hs, ge, ms));
+                // Default composition (2026-10-29): the reframed one (Reframe.cs), from the saved cluster.
+                if (args.Contains("--wide")) tiles.Add(Edition.MarkOverview(gs, Edition.ShapeView(gs, ge.Shape, seed), hs, ge, ms));
+                else tiles.Add(Edition.ReframedTile(Path.Combine(gdir, "cluster_" + seed + ".obj"), ge.Shape, seed, hs, ge, ms, ge.Shape == "chain" || ge.Shape == "branch" || ge.Shape == "ring"));
                 specs.Add(string.Format(CI, "{0}: " + ge.Shape + ", {1} bubbles, r {2:F2}..{3:F2}, skew {4:F1}, variant {5}", seed, ge.Count, ge.RMin, ge.RMax, ge.SizeSkew, ge.Variant));
                 log("gallery " + (i + 1) + "/" + nRuns + ": " + specs[specs.Count - 1]);
             }
