@@ -139,8 +139,8 @@ public static class Program
             // Foam forming, then cells dropped as rigid stones; forward + reverse loop as MP4 + GIF (Anim.cs).
             int seed = int.Parse(opt("seed", "8801"));
             Edition.Animate(seed, int.Parse(opt("count", "40")), double.Parse(opt("az", "35"), CI), double.Parse(opt("el", "20"), CI),
-                            int.Parse(opt("fps", "24")), Path.Combine(root, "anim_" + seed + (opt("mode", "grow") == "grow" ? "" : "_" + opt("mode", "grow")) + (opt("style", "lines") == "lines" ? "" : "_" + opt("style", "lines"))), log,
-                            opt("style", "lines"), int.Parse(opt("from", "-1")), int.Parse(opt("to", "-1")), opt("mode", "grow"), int.Parse(opt("steps", "10000")), double.Parse(opt("sheetw", "160"), CI), double.Parse(opt("sheeth", "120"), CI));
+                            int.Parse(opt("fps", "24")), Path.Combine(root, "anim_" + seed + (opt("mode", "grow") == "grow" ? "" : "_" + opt("mode", "grow")) + (opt("style", "lines") == "lines" ? "" : "_" + opt("style", "lines")) + (opt("cycles", "1") == "1" ? "" : "_x" + opt("cycles", "1"))), log,
+                            opt("style", "lines"), int.Parse(opt("from", "-1")), int.Parse(opt("to", "-1")), opt("mode", "grow"), int.Parse(opt("steps", "10000")), double.Parse(opt("sheetw", "160"), CI), double.Parse(opt("sheeth", "120"), CI), int.Parse(opt("cycles", "1")), opt("camera", "follow") == "follow");
             return 0;
         }
         if (cmd == "rafts")

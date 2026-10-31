@@ -105,7 +105,9 @@ public static partial class Edition
     class StippleCtx
     {
         public List<RankedPoint> Skin, Inner, Ground;
-        public List<List<SurfDot>> BodyDots;
+        public List<List<SurfDot>> BodyDots;             // the current frame's stone set
+        public List<List<List<SurfDot>>> BodyDotSets;    // per frozen set
+        public double SMax = 1, StoneScale = 1;           // stone dots made at SMax; thinned by (S / SMax)^2
         public double FloorZ;
         public Vec3 KeyLight, ShadowLight;   // shadows from a steeper light (the key light's shadow ran off the sheet)
     }
@@ -139,7 +141,7 @@ public static partial class Edition
             for (int i = 0; i < cx.BodyDots.Count; i++)
                 foreach (var d in cx.BodyDots[i])
                 {
-                    var pw = pos[i] + rot[i].Rotate(d.P); var nw = rot[i].Rotate(d.N);
+                    var pw = pos[i] + rot[i].Rotate(d.P * cx.StoneScale); var nw = rot[i].Rotate(d.N);
                     double facing = -Vec3.Dot(nw, sc.F);
                     if (facing <= 0.02) continue;
                     var q = sc.Project(pw);
@@ -147,7 +149,8 @@ public static partial class Edition
                     if (!sc.Query(q, out s2, out pp, out nn)) continue;
                     if (Math.Abs(sc.Depth(pp) - sc.Depth(pw)) > veps) continue;   // hidden behind another stone
                     double t = sc.Lit != null ? 1 - sc.Lit(s2, q, pp, nn) : 1 - Math.Max(0, Vec3.Dot(nn, sc.Light));
-                    if (d.U < Frac(1.05 * t) * facing * bodyMix) hatch.Add(Tick(q, rng));
+                    double thin = Math.Min(1, (sc.S * cx.StoneScale / cx.SMax) * (sc.S * cx.StoneScale / cx.SMax));
+                    if (d.U < Frac(1.05 * t) * facing * bodyMix * thin) hatch.Add(Tick(q, rng));
                 }
         }
         // Inner walls (foam only): two-sided interior scene, classic light, sparser.
@@ -182,8 +185,8 @@ public static partial class Edition
             if (foamFade > 0.02)
                 lines.AddRange(DotLines(Hatcher.VisibleRuns(sc, all, 1.2 / sc.S, 0.6, true).Select(Smooth2).ToList(), 0.9 / foamFade, 0.05, ms, rng));
         }
-        else
-            hatch.AddRange(DotLines(Hatcher.VisibleRuns(sc, creases, 4 / (sc.S * sc.Res)), 0.6, 0.05, ms, rng));
+        if (creases != null && bodyMix > 0.02)
+            hatch.AddRange(DotLines(Hatcher.VisibleRuns(sc, creases, 4 / (sc.S * sc.Res)), 0.6 / Math.Max(0.15, foam ? bodyMix : 1), 0.05, ms, rng));
         if (sc.Tris.Count > 0) hatch.AddRange(DotLines(Hatcher.VisibleRuns(sc, sc.Silhouettes(), 1.0 / sc.S, 0.6).Select(Smooth2).ToList(), 0.5, 0.05, ms, rng));
 
         // Shadow on the ground: the mesh projected along the light onto z = FloorZ, rasterised on a ground grid,
