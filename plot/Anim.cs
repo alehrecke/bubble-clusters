@@ -562,6 +562,7 @@ public static partial class Edition
             }
             SheetIO.Optimize(p);
             SheetIO.WritePng(p, Path.Combine(fdir, string.Format("f{0:0000}.png", fi)), 8, weights);
+            Directory.CreateDirectory(sdir); Directory.CreateDirectory(fdir);   // something outside removed svg/ mid-render once (2026-10-31)
             SheetIO.WriteSvg(p, Path.Combine(sdir, string.Format("f{0:0000}.svg", fi)), "Bubble animation " + seed + " frame " + fi);
             if (fi % 40 == 0) log(string.Format(ci, "  rendered {0}/{1} ({2:F0} s)", fi, nF, sw.Elapsed.TotalSeconds));
         }
