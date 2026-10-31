@@ -102,7 +102,7 @@ Read these pages at the start of any session before writing code:
   - `gh/BubbleSolver.template.cs`: a ~40-line paste-in shim → `python gh/build_gh.py` → `gh/BubbleSolver.cs` (fallback, same behaviour).
   `gh/check/` compiles the merged script against Rhino 8's DLLs (`cd gh/check && dotnet build`; `GH_CHECK` stubs). `gh/SETUP.md` = wiring.
 - `plot/` (since 2026-10-18): **bubbleplot**, headless pen-plot editions (net9 exe compiling `core/`). Seeded cluster →
-  overview + per-bubble specimen/context A4 SVGs (pen layers) + PNG previews + manifest, in `editions/<seed>/` (git-ignored).
+  overview + per-bubble specimen/context A4 SVGs (pen layers) + PNG previews + manifest, in `editions/{animations,galleries,studies}/<name>/` (git-ignored; overnight batch scripts in `editions/_batch/`).
   Two hatching styles: `short` (Pasma-style dashes) and `long` (flowing lines), both ringing each bubble's light axis.
   `--field light|facet|border` stroke direction (Alex prefers short + border); `--hidden solid|dash`; `--swirl 0..1`; `--light dramatic` (shadow map + AO, steep tone curve); `--style mixed` (length emerges, self-avoiding); `--outline off`; `tone` debug command; `*_plotter-landscape.svg` copies for the AxiDraw A3 (Pi config needs `model = 2`); generator 16-26 bubbles, r 0.3-1.9; `--paper a3` = 4-up A3 pages (A5 tiles); `overviews --seeds` = 4 clusters per A3.
   See `plot/README.md`. Check the PNGs yourself before showing Alex (Read the image).

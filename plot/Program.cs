@@ -18,7 +18,7 @@ using System.Linq;
 //   bubbleplot overviews --seeds 11,12,13,14 [--style short] [--field light]
 //       four clusters' overviews 4-up on one A3 page
 //
-// Output: editions/<seed>/ next to this folder (git-ignored). Each sheet is an SVG with pen layers
+// Output: editions/{animations,galleries,studies}/<name>/ next to this folder (git-ignored). Each sheet is an SVG with pen layers
 // (hatch, outline, context, marks) plus a PNG preview on cream paper.
 public static class Program
 {
@@ -65,6 +65,8 @@ public static class Program
 
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "editions"));
         if (opt("out", null) != null) root = Path.GetFullPath(opt("out", null));
+        // Sorted by kind (2026-10-31): animations/, galleries/ (shape galleries, rafts), studies/ (everything else).
+        string animRoot = Path.Combine(root, "animations"), galRoot = Path.Combine(root, "galleries"), studyRoot = Path.Combine(root, "studies");
         var sw = Stopwatch.StartNew();
         Action<string> log = m => Console.WriteLine(string.Format(CI, "[{0,5:F1} s] {1}", sw.Elapsed.TotalSeconds, m));
         Func<int, EditionSettings> settings = seed => new EditionSettings
@@ -77,7 +79,7 @@ public static class Program
         if (cmd == "overviews")
         {
             var seeds = opt("seeds", "1,2,3,4").Split(',').Select(x => int.Parse(x.Trim(), CI)).ToList();
-            string dir0 = Path.Combine(root, "overviews_" + string.Join("-", seeds));
+            string dir0 = Path.Combine(studyRoot, "overviews_" + string.Join("-", seeds));
             Directory.CreateDirectory(dir0);
             var foams = seeds.Select(sd => { var e0 = settings(sd); return new { e = e0, s = Edition.Generate(e0, dir0, log) }; }).ToList();
             foreach (var va in variants)
@@ -139,7 +141,7 @@ public static class Program
             // Foam forming, then cells dropped as rigid stones; forward + reverse loop as MP4 + GIF (Anim.cs).
             int seed = int.Parse(opt("seed", "8801"));
             Edition.Animate(seed, int.Parse(opt("count", "40")), double.Parse(opt("az", "35"), CI), double.Parse(opt("el", "20"), CI),
-                            int.Parse(opt("fps", "24")), Path.Combine(root, "anim_" + seed + (opt("mode", "grow") == "grow" ? "" : "_" + opt("mode", "grow")) + (opt("style", "lines") == "lines" ? "" : "_" + opt("style", "lines")) + (opt("cycles", "1") == "1" ? "" : "_x" + opt("cycles", "1"))), log,
+                            int.Parse(opt("fps", "24")), Path.Combine(animRoot, "anim_" + seed + (opt("mode", "grow") == "grow" ? "" : "_" + opt("mode", "grow")) + (opt("style", "lines") == "lines" ? "" : "_" + opt("style", "lines")) + (opt("cycles", "1") == "1" ? "" : "_x" + opt("cycles", "1"))), log,
                             opt("style", "lines"), int.Parse(opt("from", "-1")), int.Parse(opt("to", "-1")), opt("mode", "grow"), int.Parse(opt("steps", "10000")), double.Parse(opt("sheetw", "160"), CI), double.Parse(opt("sheeth", "120"), CI), int.Parse(opt("cycles", "1")), opt("camera", "follow") == "follow");
             return 0;
         }
@@ -148,7 +150,7 @@ public static class Program
             // Bubble rafts floating on a water plane (Raft.cs), one per A3 quadrant: rafts --start N [--n 8] [--marks glass-pure]
             int start = int.Parse(opt("start", "7201")), nRuns = int.Parse(opt("n", "8"));
             string kind = MarkSettings.Resolve(opt("marks", "glass-pure"));
-            string rdir = Path.Combine(root, "rafts_" + kind + "_" + start + "-" + (start + nRuns - 1));
+            string rdir = Path.Combine(galRoot, "rafts_" + kind + "_" + start + "-" + (start + nRuns - 1));
             Directory.CreateDirectory(rdir);
             var tiles = new List<Plot>(); var specs = new List<string>();
             for (int i = 0; i < nRuns; i++)
@@ -193,7 +195,7 @@ public static class Program
             string kind = MarkSettings.Resolve(opt("marks", "glass-pure"));
             // --shapes chain,ring,raft,branch,buds,ball: cycled through the runs (Shapes.cs); default all round balls.
             var shapes = opt("shapes", "ball").Split(',').Select(x => x.Trim().ToLowerInvariant()).ToArray();
-            string gdir = Path.Combine(root, "gallery_" + kind + (shapes.Length > 1 || shapes[0] != "ball" ? "_shapes" : "") + "_" + start + "-" + (start + nRuns - 1));
+            string gdir = Path.Combine(galRoot, "gallery_" + kind + (shapes.Length > 1 || shapes[0] != "ball" ? "_shapes" : "") + "_" + start + "-" + (start + nRuns - 1));
             Directory.CreateDirectory(gdir);
             var tiles = new List<Plot>();
             var specs = new List<string>();
@@ -245,7 +247,7 @@ public static class Program
             //   bed --seed N [--count 120] [--layers 3] [--bed mist,lattice] [--reuse: replot the saved foam]
             e.SheetW = A3W; e.SheetH = A3H;
             var b = new BedSettings { Count = int.Parse(opt("count", "120")), Layers = double.Parse(opt("layers", "3"), CI) };
-            string bdir = Path.Combine(root, "bed_" + e.Seed.ToString(CI));
+            string bdir = Path.Combine(studyRoot, "bed_" + e.Seed.ToString(CI));
             Directory.CreateDirectory(bdir);
             string bobj = Path.Combine(bdir, "bed.obj"), bwin = Path.Combine(bdir, "window.txt");
             FoamSolver bs;
@@ -272,7 +274,7 @@ public static class Program
             log("done: " + bdir);
             return 0;
         }
-        string dir = Path.Combine(root, e.Seed.ToString(CI));
+        string dir = Path.Combine(studyRoot, e.Seed.ToString(CI));
         FoamSolver s;
         int featured = -1;
         if (cmd == "obj")
@@ -280,7 +282,7 @@ public static class Program
             // bubbleplot obj <foam.obj> [--seed N for the view] : plot a saved foam (harness / GH run mesh) instead of generating one.
             // Previews the overview + the interior bubble with the most faces (a whole cell, e.g. a Kelvin cell).
             string objPath = Path.GetFullPath(args[1]);
-            dir = Path.Combine(root, "obj_" + Path.GetFileNameWithoutExtension(objPath));
+            dir = Path.Combine(studyRoot, "obj_" + Path.GetFileNameWithoutExtension(objPath));
             Directory.CreateDirectory(dir);
             s = new FoamSolver(FoamAnalysis.FromObj(File.ReadAllText(objPath)), new SolverSettings());
             featured = MostFacedInterior(s.Mesh);
@@ -305,7 +307,7 @@ public static class Program
         {
             // Mark-making tests: one A3 overview per kind (Marks.cs). --marks stipple,cross,natural,glass
             // [--wobble mm] [--breaks per-mm] [--dotmin mm]
-            string mdir = Path.Combine(root, "marks_" + e.Seed.ToString(CI));
+            string mdir = Path.Combine(studyRoot, "marks_" + e.Seed.ToString(CI));
             if (args.Contains("--quad"))
             {
                 // Four kinds on one A3 page (A5 quadrants, left to right, top to bottom) to plot side by side.

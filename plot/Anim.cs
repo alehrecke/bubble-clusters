@@ -580,6 +580,7 @@ public static partial class Edition
             string seg = Path.Combine(dir, string.Format("segment_{0}-{1}_{2}.mp4", fiFrom, fiTo, style));
             int xs = ffr(string.Format(ci, "-y -framerate {0} -i \"{1}\" -c:v libx264 -pix_fmt yuv420p -crf 18 \"{2}\"", fps, Path.Combine(tmp, "%05d.png"), seg));
             log("segment " + fiFrom + "-" + fiTo + ": " + seg + " exit " + xs);
+            try { Directory.Delete(tmp, true); } catch { }
             return;
         }
 
@@ -608,6 +609,7 @@ public static partial class Edition
         string share = Path.Combine(dir, "anim_" + seed + "_share.mp4");
         ffr(string.Format(ci, "-y -framerate {0} -i \"{1}\" -vf \"scale=800:-2\" -c:v libx264 -pix_fmt yuv420p -crf 29 -preset slow \"{2}\"", fps, Path.Combine(qdir, "%05d.png"), share));
         log(string.Format(ci, "sequence {0} frames ({1:F1} s); mp4 exit {2}, gif exit {3}", seq.Count, seq.Count / (double)fps, x1, x2));
+        try { Directory.Delete(qdir, true); } catch { }   // seq/ is only copies of frames/ (2026-10-31 cleanup)
         try { Directory.Delete(animCache, true); } catch { }
     }
 

@@ -169,7 +169,7 @@ cluster light (+ film rim), tiny crisp glints, stippled contact shadows (only fr
 bead surface. mist-dew / mist-dew-dense; read best at full A3 (`marks --marks mist-dew`), ~87k strokes.
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
-## Output: `editions/<seed>/` (git-ignored)
+## Output: `editions/animations/`, `editions/galleries/`, `editions/studies/` (git-ignored)
 
 | File | What |
 |---|---|
