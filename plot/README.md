@@ -169,6 +169,20 @@ cluster light (+ film rim), tiny crisp glints, stippled contact shadows (only fr
 bead surface. mist-dew / mist-dew-dense; read best at full A3 (`marks --marks mist-dew`), ~87k strokes.
 HatchStyle knobs added for these: `RotateDeg`, `ToneFrom`, `ToneScale`.
 
+## Flipbook cards (`flipbook`, 2026-11-05)
+
+For Alex's Orbit Flipbook (`D:\AUGBOT\Personal\Practice\Projects\OrbitFlipbook`, see its `docs/FRAMES.md` and
+`docs/DATA-CONTRACT.md`): a settled cluster drawn from a moving camera, one 88 x 63 mm poker card per frame, laid
+out 12 per landscape A3 sheet for the printed card jig, plus a pan/tilt `profile_<id>.json` for the machine's
+firmware and a `preview.gif`.
+
+    bubbleplot flipbook --seed 8802 --path orbit|orbit-nod|sway|nod|figure8 [--frames 48] [--az0 35] [--el0 35]
+                        [--sweep 60] [--nod 20] [--marks mist-dew] [--zoom 1] [--id 1] [--out <root>]
+    bubbleplot flipbook-jigtest [--out <root>]     # registration rectangles for the jig
+
+Constant framing (a fit sphere sized over every view of the path) and world-fixed lights (`Edition.WorldFill` /
+`WorldKey`, frozen at the az0/el0 view), so the cluster neither drifts nor has its shading slide as the camera orbits.
+
 ## Output: `editions/animations/`, `editions/galleries/`, `editions/studies/` (git-ignored)
 
 | File | What |

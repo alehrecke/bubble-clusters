@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -241,6 +241,13 @@ public static class Program
         }
 
         var e = settings(int.Parse(opt("seed", "1")));
+        if (cmd == "flipbook-jigtest")
+        {
+            string jdir = Path.Combine(animRoot, "flipbook_jigtest");
+            Edition.FlipbookJigTest(jdir, e);
+            log("done: " + jdir);
+            return 0;
+        }
         if (cmd == "bed")
         {
             // Foam bed on the A3 sheet, seen from below through the plane (Bed.cs).
@@ -303,6 +310,18 @@ public static class Program
         }
         var view = Edition.MakeView(e.Seed, double.Parse(opt("az", "NaN"), CI), double.Parse(opt("el", "NaN"), CI));
         if (cmd == "tone") { Edition.ToneImage(s, view, e, Path.Combine(dir, "tone_" + e.Light + ".png")); log("tone image written"); return 0; }
+        if (cmd == "flipbook")
+        {
+            // Orbit Flipbook cards (Flipbook.cs): one poker card per frame from a moving camera + the pan/tilt profile.
+            string fpath = opt("path", "orbit"), fmarks = opt("marks", "mist-dew");
+            Edition.FlipZoom = double.Parse(opt("zoom", "1.0"), CI);
+            var fhs = dense(new HatchStyle { Short = style == "short", Mixed = style == "mixed", Hyper = light == "dramatic", Field = field, Swirl = swirl, Hidden = hidden });
+            Edition.Flipbook(s, e.Seed, fpath, int.Parse(opt("frames", "48")), int.Parse(opt("fps", "12")),
+                             double.Parse(opt("az0", "35"), CI), double.Parse(opt("el0", "35"), CI), double.Parse(opt("sweep", "60"), CI), double.Parse(opt("nod", "20"), CI),
+                             fmarks, int.Parse(opt("id", "1")), fhs, e,
+                             Path.Combine(animRoot, "flipbook_" + e.Seed + "_" + fpath + "_" + MarkSettings.Resolve(fmarks)), log);
+            return 0;
+        }
         if (cmd == "marks")
         {
             // Mark-making tests: one A3 overview per kind (Marks.cs). --marks stipple,cross,natural,glass

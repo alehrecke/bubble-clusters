@@ -196,7 +196,10 @@ public static partial class Edition
         return new View { Forward = f, Azimuth = az, Elevation = el, Seed = seed };
     }
 
-    static void Light(Scene sc) { sc.Light = (sc.R * -0.45 + sc.U * 0.7 + sc.F * -0.55).Normalized(); }
+    // World-fixed lights (Flipbook.cs): when set, the light stays put on the object as the camera orbits, instead of
+    // riding along with the camera. Null = the usual camera-relative lights.
+    static Vec3? WorldFill, WorldKey;
+    static void Light(Scene sc) { sc.Light = WorldFill ?? (sc.R * -0.45 + sc.U * 0.7 + sc.F * -0.55).Normalized(); }
 
     // Per bubble: the axis its strokes ring around (the light direction, nudged a little per bubble).
     static Func<int, Vec3> Axes(Scene sc, int seed)
@@ -231,7 +234,7 @@ public static partial class Edition
         sc.Rasterize(e.RasterPxPerMm, p.Width, p.Height);
         if (st != null && st.Field == "border") sc.BuildBorderField();
         if (st != null && e.Light == "dramatic")
-            Lighting.Setup(sc, (sc.R * -0.72 + sc.U * 0.5 + sc.F * -0.48).Normalized(), new LightSettings());
+            Lighting.Setup(sc, WorldKey ?? (sc.R * -0.72 + sc.U * 0.5 + sc.F * -0.48).Normalized(), new LightSettings());
         if (st != null && st.Swirl > 0) sc.BuildSwirl(v.Seed, st.Swirl, 8 * s.TargetEdge);
         return sc;
     }
